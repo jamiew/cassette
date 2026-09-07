@@ -160,7 +160,7 @@ struct ListenBrainzSettingsViewModelTests {
         await vm.connect()
         await vm.resetCredentials()
 
-        #expect(vm.usernameInput == "")
+        #expect(vm.usernameInput.isEmpty)
         #expect(vm.snapshot.username == nil)
         #expect(vm.snapshot.isEnabled == false)
         #expect(vm.isProcessing == false)

@@ -303,7 +303,7 @@ struct LyricsViewModelLoadTests {
         let id = UUID()
         let (vm, _) = try makeViewModel(serverId: id, lyrics: multiLanguageList())
         await vm.load()
-        if case .loaded(_) = vm.state {
+        if case .loaded = vm.state {
             // pass
         } else {
             Issue.record("Expected .loaded after successful load, got \(vm.state)")
@@ -317,7 +317,7 @@ struct LyricsViewModelLoadTests {
         // not LyricsError.notSupportedByServer).
         let (vm, _) = try makeViewModel(lyrics: nil)
         await vm.load()
-        if case .error(_) = vm.state { /* pass */ }
+        if case .error = vm.state { /* pass */ }
         else { Issue.record("Expected .error when network unavailable and cache empty, got \(vm.state)") }
     }
 

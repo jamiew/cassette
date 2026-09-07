@@ -70,7 +70,7 @@ private struct DownloadedContent: View {
 
     #if os(macOS)
     private var downloadedListMacOS: some View {
-        ScrollViewReader { proxy in
+        ScrollViewReader { _ in
             List {
                 if !displayAlbums.isEmpty {
                     Section("Albums") {

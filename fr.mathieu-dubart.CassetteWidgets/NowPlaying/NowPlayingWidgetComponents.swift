@@ -19,7 +19,7 @@ struct WidgetCoverArtView: View {
             if let image {
                 Image(uiImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .scaledToFill()
             } else {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(.white.opacity(0.15))

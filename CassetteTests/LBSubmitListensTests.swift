@@ -87,7 +87,7 @@ struct LBTrackMetadataTests {
             replayGainBaseGain: nil, replayGainFallbackGain: nil
         )
         let meta = LBTrackMetadata(from: song)
-        #expect(meta.artistName == "")
+        #expect(meta.artistName.isEmpty)
         #expect(meta.releaseName == nil)
     }
 }

@@ -142,7 +142,7 @@ struct QueueFileTests {
     func corruptFileStartsEmpty() async throws {
         let fileURL = tempQueueURL()
         defer { try? FileManager.default.removeItem(at: fileURL) }
-        try "not valid json [ {".data(using: .utf8)!.write(to: fileURL)
+        try Data("not valid json [ {".utf8).write(to: fileURL)
 
         let keychain = SubmitMockKeychain()
         let defaults = UserDefaults(suiteName: "test.queue.\(UUID().uuidString)")!

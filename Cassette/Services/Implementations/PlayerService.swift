@@ -526,14 +526,14 @@ actor PlayerService: PlayerServiceProtocol {
         let rawType = (httpResponse.allHeaderFields["Content-Type"] as? String ?? "").lowercased()
         let contentType = rawType.components(separatedBy: ";").first?.trimmingCharacters(in: .whitespaces) ?? ""
 
-        let whitelist: Set<String> = ["audio/mpeg", "audio/mp4", "audio/aac", "audio/x-aac", "audio/aacp"]
-        let blacklist: Set<String> = ["audio/flac", "audio/x-flac", "audio/opus", "audio/ogg", "audio/vorbis"]
+        let supported: Set<String> = ["audio/mpeg", "audio/mp4", "audio/aac", "audio/x-aac", "audio/aacp"]
+        let unsupported: Set<String> = ["audio/flac", "audio/x-flac", "audio/opus", "audio/ogg", "audio/vorbis"]
 
-        if whitelist.contains(contentType) {
+        if supported.contains(contentType) {
             Logger.player.debug("[RADIO-CODEC] content-type=\(contentType, privacy: .public) → supported")
             return .supported
         }
-        if blacklist.contains(contentType) {
+        if unsupported.contains(contentType) {
             return .unsupported(contentType: contentType)
         }
         Logger.player.debug("[RADIO-CODEC] content-type=\(contentType.isEmpty ? "(empty)" : contentType, privacy: .public) → ambiguous, letting player try")
@@ -1644,7 +1644,7 @@ actor PlayerService: PlayerServiceProtocol {
             } else if repeatMode == .one {
                 Logger.crossfade.debug("skip — repeat-one (track='\(title, privacy: .public)')")
             } else if duration <= 2 * D {
-                Logger.crossfade.debug("skip — short track (duration=\(String(format:"%.1f",duration))s, 2D=\(String(format:"%.1f",2*D))s)")
+                Logger.crossfade.debug("skip — short track (duration=\(String(format: "%.1f", duration))s, 2D=\(String(format: "%.1f", 2 * D))s)")
             }
         }
 

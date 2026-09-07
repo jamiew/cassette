@@ -56,7 +56,7 @@ struct ArtistsListMacOS: View {
             GeometryReader { geo in
                 let count = Self.gridColumnCount(for: geo.size.width)
                 let columns = Array(repeating: GridItem(.flexible(), spacing: 24), count: count)
-                ScrollViewReader { proxy in
+                ScrollViewReader { _ in
                     ScrollView {
                         // TODO(v1.5.x): Add visible alphabet section headers (jump bar already implemented in v1.5)
                         LazyVGrid(columns: columns, spacing: 32) {

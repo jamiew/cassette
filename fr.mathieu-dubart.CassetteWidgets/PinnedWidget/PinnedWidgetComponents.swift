@@ -19,7 +19,7 @@ struct PinnedTileView: View {
                 if let image {
                     Image(uiImage: image)
                         .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .scaledToFill()
                 } else {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(.white.opacity(0.15))

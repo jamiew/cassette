@@ -297,7 +297,7 @@ struct FullPlayerExpandedView: View {
                 height: 3,
                 points: [
                     SIMD2<Float>(0.0, 0.0),
-                    SIMD2<Float>(0.5 + wave  * 0.05, 0.0),
+                    SIMD2<Float>(0.5 + wave * 0.05, 0.0),
                     SIMD2<Float>(1.0, 0.0),
 
                     SIMD2<Float>(0.0, 0.5 + wave2 * 0.04),
@@ -305,7 +305,7 @@ struct FullPlayerExpandedView: View {
                     SIMD2<Float>(1.0, 0.5 - wave2 * 0.04),
 
                     SIMD2<Float>(0.0, 1.0),
-                    SIMD2<Float>(0.5 - wave  * 0.05, 1.0),
+                    SIMD2<Float>(0.5 - wave * 0.05, 1.0),
                     SIMD2<Float>(1.0, 1.0)
                 ],
                 colors: [

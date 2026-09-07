@@ -55,10 +55,9 @@ struct FreshReleaseDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .task {
-            for provider in providers {
-                if provider.buildURL(artistName: release.artistName, albumTitle: release.title) == nil {
-                    Logger.integrations.warning("buildURL returned nil for provider '\(provider.name, privacy: .public)'")
-                }
+            for provider in providers
+                where provider.buildURL(artistName: release.artistName, albumTitle: release.title) == nil {
+                Logger.integrations.warning("buildURL returned nil for provider '\(provider.name, privacy: .public)'")
             }
         }
     }

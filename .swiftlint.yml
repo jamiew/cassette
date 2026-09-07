@@ -1,0 +1,74 @@
+# Cassette lint gate.
+#
+# The point of this config is that `swiftlint --strict` passes on the tree as it
+# stands, so any violation CI reports comes from the change under review. Rules the
+# existing code breaks in bulk are disabled rather than mass-fixed: reformatting
+# ~1,400 sites would bury real diffs and conflict with every open branch.
+# Re-enable one when you are ready to fix its call sites in a dedicated commit.
+
+disabled_rules:
+  # Formatting. Cassette predates any formatter, and these fire in the hundreds.
+  - line_length
+  - trailing_whitespace
+  - vertical_whitespace
+  - trailing_comma
+  - comma
+  - colon
+  - opening_brace
+  - statement_position
+  - trailing_newline
+  - multiple_closures_with_trailing_closure
+
+  # Naming. `id`, `vm`, `db` and similar short names are used deliberately throughout.
+  - identifier_name
+  - type_name
+
+  # Size metrics. PlayerService and the SwiftUI views are large by design.
+  - type_body_length
+  - file_length
+  - function_body_length
+  - cyclomatic_complexity
+  - function_parameter_count
+  - large_tuple
+  - nesting
+
+  # Style choices this codebase makes on purpose.
+  - implicit_optional_initialization # `var x: T? = nil` is used for clarity
+  - redundant_discardable_let # `let _ = ` reads better than `_ = ` in some call sites
+  - todo # TODOs carry ticket context and are tracked deliberately
+  - force_try # confined to tests and to fixture construction
+  - static_over_final_class # `override class func` members cannot be `static`
+
+opt_in_rules:
+  - closure_spacing
+  - contains_over_first_not_nil
+  - empty_string
+  - first_where
+  - last_where
+  - overridden_super_call
+  - prohibited_super_call
+  - sorted_first_last
+  - yoda_condition
+
+# Intentionally not enabled:
+#   force_unwrapping — URL string literals and test fixtures rely on it
+#   modifier_order   — conflicts with the `nonisolated`/`private` ordering used here
+#   operator_usage_whitespace — the design system aligns operators into columns on purpose
+#   empty_count            — AddMusicSelection exposes `count` without being a Collection
+#   redundant_nil_coalescing — false positive on `[String: URL?]` subscripts, where
+#                              `?? nil` flattens the double optional and is required
+
+included:
+  - Cassette
+  - CassetteTests
+  - CassetteUITests
+  - fr.mathieu-dubart.CassetteWidgets
+
+excluded:
+  - .build
+  - DerivedData
+  - thelot-ios
+
+force_cast: warning
+
+reporter: "xcode"
