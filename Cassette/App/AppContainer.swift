@@ -33,6 +33,10 @@ final class AppContainer {
     let playlistService: any PlaylistServiceProtocol
     let radioService: any RadioServiceProtocol
     let toastService = ToastService()
+    #if os(iOS)
+    /// Google Cast session owner. iOS only — the Cast SDK ships no macOS slice.
+    let castManager = CastManager()
+    #endif
     let networkMonitor = NetworkMonitor()
     let sessionService: PlaybackSessionService
     let dominantColorExtractor = DominantColorExtractor()
@@ -161,6 +165,10 @@ final class AppContainer {
         await _player.setWidgetSyncService(widgetSyncService)
         await _player.setReplayGainService(replayGainService)
         await _player.crossfadeSettingsDidChange()
+        #if os(iOS)
+        castManager.configure()
+        await _player.setCastManager(castManager)
+        #endif
     }
 }
 

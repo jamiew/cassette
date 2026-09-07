@@ -51,6 +51,13 @@ actor PlayerService: PlayerServiceProtocol {
     private var liveStreamStallTask: Task<Void, Never>?
 
     private var audioSessionConfigured = false
+
+    #if os(iOS)
+    private var castManager: CastManager?
+    /// Mirrors `CastManager.isCasting` so the playback hot path avoids a MainActor hop.
+    /// Kept in sync by the CastPlaybackDelegate callbacks.
+    private var isCasting = false
+    #endif
     #if os(iOS)
     private var interruptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
@@ -200,6 +207,14 @@ actor PlayerService: PlayerServiceProtocol {
         await service.attach(to: audioPlayer)
     }
 
+    #if os(iOS)
+    /// Call from AppContainer after both PlayerService and CastManager are created.
+    func setCastManager(_ manager: CastManager) async {
+        castManager = manager
+        await MainActor.run { manager.delegate = self }
+    }
+    #endif
+
     // MARK: - Play
 
     func play(tracks: [DisplayableSong], startIndex: Int) async throws {
@@ -348,29 +363,14 @@ actor PlayerService: PlayerServiceProtocol {
         }
 
         #if os(iOS)
-        configureAudioSessionIfNeeded()
-        #endif
-
-        let fadingInAllowed: Bool
-        #if os(iOS)
-        fadingInAllowed = shouldFadeIn && !PlayerService.isProblematicRoute(
-            portTypes: AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portType }
-        )
-        #else
-        fadingInAllowed = shouldFadeIn
-        #endif
-
-        if fadingInAllowed {
-            audioPlayer.volume = 0
+        if isCasting {
+            await startCastPlayback(song: song, at: 0, autoplay: true)
         } else {
-            // Reassert the saved volume right before play() — the one reliably-effective moment. Without
-            // it, a cold-launched player (default 1.0) plays the first track loud, ignoring a low slider.
-            audioPlayer.volume = restoredVolume
+            startLocalEngine(source: source, allowFadeIn: shouldFadeIn)
         }
-        audioPlayer.play(url: source.url, headers: source.customHeaders)
-        if fadingInAllowed {
-            performFadeIn(duration: crossfadeConfig.duration)
-        }
+        #else
+        startLocalEngine(source: source, allowFadeIn: shouldFadeIn)
+        #endif
 
         let duration = song.duration
         await MainActor.run {
@@ -416,6 +416,30 @@ actor PlayerService: PlayerServiceProtocol {
         }
         if let ws = widgetSyncService {
             Task { [weak ws] in await ws?.onPlayStateChanged(isPlaying: true, currentSong: song) }
+        }
+    }
+
+    /// Starts the AudioStreaming engine on `source`, fading in when a crossfade was in flight.
+    private func startLocalEngine(source: MediaSource, allowFadeIn: Bool) {
+        #if os(iOS)
+        configureAudioSessionIfNeeded()
+        let fadingInAllowed = allowFadeIn && !PlayerService.isProblematicRoute(
+            portTypes: AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portType }
+        )
+        #else
+        let fadingInAllowed = allowFadeIn
+        #endif
+
+        if fadingInAllowed {
+            audioPlayer.volume = 0
+        } else {
+            // Reassert the saved volume right before play() — the one reliably-effective moment. Without
+            // it, a cold-launched player (default 1.0) plays the first track loud, ignoring a low slider.
+            audioPlayer.volume = restoredVolume
+        }
+        audioPlayer.play(url: source.url, headers: source.customHeaders)
+        if fadingInAllowed {
+            performFadeIn(duration: crossfadeConfig.duration)
         }
     }
 
@@ -711,6 +735,14 @@ actor PlayerService: PlayerServiceProtocol {
 
     func setVolume(_ volume: Float) async {
         let clamped = max(0, min(1, volume))
+        #if os(iOS)
+        // While casting the slider drives the receiver, not the local engine, so the
+        // saved restore volume is left untouched for when playback comes back.
+        if isCasting {
+            await withCast { $0.setDeviceVolume(clamped) }
+            return
+        }
+        #endif
         audioPlayer.volume = clamped
         // Don't persist 0 — muting should not overwrite the saved restore volume.
         if clamped > 0 {
@@ -869,11 +901,17 @@ actor PlayerService: PlayerServiceProtocol {
     func pause() async {
         cancelFadeTasks()
         finalizePlaySegment()
-        audioPlayer.pause()
         #if os(iOS)
-        sessionActivationRetryTask?.cancel()
-        sessionActivationRetryTask = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if isCasting {
+            await withCast { $0.pause() }
+        } else {
+            audioPlayer.pause()
+            sessionActivationRetryTask?.cancel()
+            sessionActivationRetryTask = nil
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        #else
+        audioPlayer.pause()
         #endif
         await MainActor.run { state.playbackState = .paused }
         await pushPositionSnapshot(rate: 0.0)
@@ -896,7 +934,7 @@ actor PlayerService: PlayerServiceProtocol {
         }
         isRestoringSession = false
         #if os(iOS)
-        configureAudioSessionIfNeeded()
+        if !isCasting { configureAudioSessionIfNeeded() }
         #endif
         // Lazily start the accumulator for session-restored tracks that resume for the first time.
         if trackPlayStartDate == nil { trackPlayStartDate = Date() }
@@ -915,6 +953,32 @@ actor PlayerService: PlayerServiceProtocol {
             }
         }
 
+        #if os(iOS)
+        if isCasting {
+            // The receiver may hold nothing (cold restore, or a stop), so reload the
+            // current track at the position the UI is already showing.
+            let (track, position) = await MainActor.run { (state.currentTrack, state.position) }
+            if let track {
+                await startCastPlayback(song: track, at: position, autoplay: true)
+            }
+        } else {
+            await resumeLocalEngine()
+        }
+        #else
+        await resumeLocalEngine()
+        #endif
+        await MainActor.run { state.playbackState = .playing }
+        await pushPositionSnapshot(rate: 1.0)
+        startProgressTimer()
+        startPositionSaveTimer()
+        let resumeTrack = await MainActor.run { state.currentTrack }
+        if let ws = widgetSyncService {
+            Task { [weak ws] in await ws?.onPlayStateChanged(isPlaying: true, currentSong: resumeTrack) }
+        }
+    }
+
+    /// Resumes the AudioStreaming engine, restarting it from scratch on the cold-restore path.
+    private func resumeLocalEngine() async {
         // Cold-restore path: session activation was deferred at launch, so the player was never
         // started. Start fresh now that the user has explicitly triggered playback.
         if audioPlayer.state == .ready, let source = currentSource {
@@ -929,14 +993,6 @@ actor PlayerService: PlayerServiceProtocol {
             audioPlayer.play(url: freshSource.url, headers: freshSource.customHeaders)
         } else {
             audioPlayer.resume()
-        }
-        await MainActor.run { state.playbackState = .playing }
-        await pushPositionSnapshot(rate: 1.0)
-        startProgressTimer()
-        startPositionSaveTimer()
-        let resumeTrack = await MainActor.run { state.currentTrack }
-        if let ws = widgetSyncService {
-            Task { [weak ws] in await ws?.onPlayStateChanged(isPlaying: true, currentSong: resumeTrack) }
         }
     }
 
@@ -976,6 +1032,9 @@ actor PlayerService: PlayerServiceProtocol {
         }
         liveStreamStallTask?.cancel()
         liveStreamStallTask = nil
+        #if os(iOS)
+        if isCasting { await withCast { $0.stopMedia() } }
+        #endif
         audioPlayer.stop()
         #if os(iOS)
         sessionActivationRetryTask?.cancel()
@@ -1024,7 +1083,15 @@ actor PlayerService: PlayerServiceProtocol {
             finalizePlaySegment()
             currentPlaySegmentStart = Date()
         }
+        #if os(iOS)
+        if isCasting {
+            await withCast { $0.seek(to: position) }
+        } else {
+            audioPlayer.seek(to: position)
+        }
+        #else
         audioPlayer.seek(to: position)
+        #endif
         await MainActor.run { state.position = position }
         await pushPositionSnapshot()
     }
@@ -1420,8 +1487,21 @@ actor PlayerService: PlayerServiceProtocol {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard !Task.isCancelled, let self else { break }
-                let progress = self.audioPlayer.progress
-                let audioDuration = self.audioPlayer.duration
+                let progress: TimeInterval
+                let audioDuration: TimeInterval
+                #if os(iOS)
+                if await self.isCasting {
+                    progress = await self.castStreamPosition()
+                    // The receiver reports no reliable duration; keep the value from the track metadata.
+                    audioDuration = 0
+                } else {
+                    progress = self.audioPlayer.progress
+                    audioDuration = self.audioPlayer.duration
+                }
+                #else
+                progress = self.audioPlayer.progress
+                audioDuration = self.audioPlayer.duration
+                #endif
                 await MainActor.run {
                     let cur = self.state.duration
                     let clamped = cur > 0 ? min(progress, cur) : progress
@@ -1499,6 +1579,11 @@ actor PlayerService: PlayerServiceProtocol {
     }
 
     private func checkPrefetchThreshold() async {
+        #if os(iOS)
+        // The receiver streams straight from the server, so warming the local cache
+        // here would only spend the user's data on a file nothing is going to read.
+        if isCasting { return }
+        #endif
         guard !prefetchScheduled else { return }
         // Snapshot only the scalars each tick — never copy the whole `state.queue` array (it can be large
         // and this runs every 500ms). The next-song element is read on MainActor only when we actually
@@ -1625,6 +1710,10 @@ actor PlayerService: PlayerServiceProtocol {
     }
 
     private func checkFadeOutThreshold() async {
+        #if os(iOS)
+        // Crossfade is an AudioStreaming volume ramp; the receiver has no equivalent.
+        if isCasting { return }
+        #endif
         guard !isFadingOut else { return }
         guard crossfadeConfig.duration > 0 else { return }
         let (duration, position, isPlaying, currentIndex, queueCount, repeatMode, title) = await MainActor.run {
@@ -1833,17 +1922,7 @@ actor PlayerService: PlayerServiceProtocol {
             await recordCurrentTrackPlayback(trigger: "repeat_one")
             wasTrackCompletedNaturally = false
             resetTrackAccumulator(isPlaying: true)
-            if let source = currentSource {
-                // Defensive: repeat-one was likely toggled on after fade-out had already started.
-                // Stop any in-flight fade tasks and restore volume on the same audioPlayer before
-                // restarting, so the looped track isn't silent. Inline cancel (not cancelFadeTasks)
-                // to skip the redundant restore log path.
-                fadeOutTask?.cancel(); fadeOutTask = nil
-                fadeInTask?.cancel(); fadeInTask = nil
-                isFadingOut = false
-                audioPlayer.volume = restoredVolume
-                audioPlayer.play(url: source.url, headers: source.customHeaders)
-            }
+            await replayCurrentTrack()
         } else {
             // Signal natural completion — recordCurrentTrackPlayback() reads this in startPlayback().
             wasTrackCompletedNaturally = true
@@ -1853,6 +1932,28 @@ actor PlayerService: PlayerServiceProtocol {
                 Logger.player.error("[TRANSITION] handleEndOfTrack: skipToNext() failed: \(error, privacy: .public)")
             }
         }
+    }
+
+    /// Restarts the current track from the beginning on whichever transport is active.
+    private func replayCurrentTrack() async {
+        #if os(iOS)
+        if isCasting {
+            if let track = await MainActor.run(body: { state.currentTrack }) {
+                await startCastPlayback(song: track, at: 0, autoplay: true)
+            }
+            return
+        }
+        #endif
+        guard let source = currentSource else { return }
+        // Defensive: repeat-one was likely toggled on after fade-out had already started.
+        // Stop any in-flight fade tasks and restore volume on the same audioPlayer before
+        // restarting, so the looped track isn't silent. Inline cancel (not cancelFadeTasks)
+        // to skip the redundant restore log path.
+        fadeOutTask?.cancel(); fadeOutTask = nil
+        fadeInTask?.cancel(); fadeInTask = nil
+        isFadingOut = false
+        audioPlayer.volume = restoredVolume
+        audioPlayer.play(url: source.url, headers: source.customHeaders)
     }
 
     /// The last track of the queue ended naturally with repeat off. Stop cleanly AT THE END — no wrap, and no
@@ -1871,6 +1972,9 @@ actor PlayerService: PlayerServiceProtocol {
         stopProgressTimer()
         stopPositionSaveTimer()
         // The engine is at EOF — stop it (NO parking play) and release the session.
+        #if os(iOS)
+        if isCasting { await withCast { $0.stopMedia() } }
+        #endif
         audioPlayer.stop()
         #if os(iOS)
         sessionActivationRetryTask?.cancel()
@@ -2267,6 +2371,144 @@ private extension AVAudioSession.RouteChangeReason {
         case .noSuitableRouteForCategory: return "noSuitableRouteForCategory"
         case .routeConfigurationChange: return "routeConfigurationChange"
         @unknown default: return "unknown(\(rawValue))"
+        }
+    }
+}
+#endif
+
+// MARK: - Chromecast
+
+#if os(iOS)
+extension PlayerService {
+    /// Where the receiver is in the current item, for the progress timer.
+    func castStreamPosition() async -> TimeInterval {
+        guard let manager = castManager else { return 0 }
+        return await MainActor.run { manager.streamPosition }
+    }
+
+    /// Runs `body` against the Cast manager on the main actor. Hoisting the reference out of
+    /// the closure keeps the actor-isolated property off the main actor's side of the hop.
+    private func withCast(_ body: @MainActor @Sendable @escaping (CastManager) -> Void) async {
+        guard let manager = castManager else { return }
+        await MainActor.run { body(manager) }
+    }
+
+    /// Packages a track for the receiver, or returns nil when it cannot be cast.
+    ///
+    /// The receiver fetches the audio itself, so this always builds a *stream* URL —
+    /// a downloaded or cached file lives on the phone and the TV cannot reach it.
+    private func castItem(for song: DisplayableSong) async -> CastMediaItem? {
+        guard let client = try? await serverService.makeSwiftSonicClient(),
+              let streamURL = client.streamURL(id: song.id) else { return nil }
+
+        // Subsonic stream URLs authenticate through query parameters, which the receiver
+        // can replay. Custom request headers cannot travel that way, and the Cast SDK has
+        // nowhere to put them, so a server behind a header-authenticated proxy is out.
+        let headers = (try? await serverService.activeCredentials().customHeaders) ?? [:]
+        guard headers.isEmpty else {
+            await MainActor.run {
+                toastService.show(
+                    "Chromecast can't reach a server that needs custom headers.",
+                    style: .error,
+                    duration: 5.0
+                )
+            }
+            return nil
+        }
+
+        let artworkURL = client.coverArtURL(id: song.coverArtId ?? song.id, size: 600)
+        return CastMediaItem(song: song, streamURL: streamURL, artworkURL: artworkURL)
+    }
+
+    /// Hands one track to the receiver, falling back to local playback if it can't be cast.
+    private func startCastPlayback(song: DisplayableSong, at position: TimeInterval, autoplay: Bool) async {
+        guard let manager = castManager, let item = await castItem(for: song) else {
+            Logger.cast.warning("'\(song.title, privacy: .public)' can't be cast — staying local")
+            if let source = currentSource {
+                startLocalEngine(source: source, allowFadeIn: false)
+            }
+            return
+        }
+        // Release the local route: the phone is a remote control from here on.
+        audioPlayer.stop()
+        sessionActivationRetryTask?.cancel()
+        sessionActivationRetryTask = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        await MainActor.run { [item] in manager.load(item, at: position, autoplay: autoplay) }
+    }
+}
+
+extension PlayerService: CastPlaybackDelegate {
+    /// A receiver connected — move the current track over at the position it had reached.
+    func castSessionDidStart() async {
+        isCasting = true
+        cancelFadeTasks()
+        cancelPendingPrefetch()
+        let (track, position, wasPlaying) = await MainActor.run {
+            (state.currentTrack, state.position, state.playbackState == .playing)
+        }
+        guard let track else {
+            // Nothing loaded yet; the next play() call goes straight to the receiver.
+            audioPlayer.stop()
+            return
+        }
+        await startCastPlayback(song: track, at: position, autoplay: wasPlaying)
+        if wasPlaying { startProgressTimer() }
+    }
+
+    /// The receiver went away — pick playback back up locally where it stopped.
+    func castSessionDidEnd(at position: TimeInterval, wasPlaying: Bool) async {
+        isCasting = false
+        guard let track = await MainActor.run(body: { state.currentTrack }),
+              let serverId = await MainActor.run(body: { serverService.state.activeServer?.id }),
+              let source = try? await mediaResolver.resolve(songId: track.id, serverId: serverId) else {
+            await MainActor.run { state.playbackState = .paused }
+            stopProgressTimer()
+            return
+        }
+
+        currentSource = source
+        await MainActor.run { state.position = position }
+        // Reuse the session-restore mechanism: the engine seeks once it reaches .playing,
+        // and pauses itself straight after when the receiver was not playing.
+        isRestoringSession = true
+        pendingRestoreInfo = (seekTime: position, pause: !wasPlaying)
+        startLocalEngine(source: source, allowFadeIn: false)
+        if !wasPlaying {
+            // Silence the ~150 ms the engine needs to land the seek before it pauses.
+            audioPlayer.volume = 0
+            isMutedForRestore = true
+        }
+
+        await MainActor.run { state.playbackState = wasPlaying ? .playing : .paused }
+        if wasPlaying {
+            startProgressTimer()
+            startPositionSaveTimer()
+        } else {
+            stopProgressTimer()
+        }
+        Logger.cast.info("Handed playback back to the device at \(position, format: .fixed(precision: 1))s")
+    }
+
+    /// The receiver reached the end of the item — Cassette owns the queue, so advance it.
+    func castMediaDidFinish() async {
+        await handleEndOfTrack()
+    }
+
+    /// Play/pause changed on the receiver, e.g. from a TV remote or the Cast dialog.
+    func castPlaybackStateDidChange(isPlaying: Bool) async {
+        await MainActor.run { state.playbackState = isPlaying ? .playing : .paused }
+        await pushPositionSnapshot(rate: isPlaying ? 1.0 : 0.0)
+        if isPlaying {
+            startProgressTimer()
+            startPositionSaveTimer()
+        } else {
+            stopProgressTimer()
+            stopPositionSaveTimer()
+        }
+        let track = await MainActor.run { state.currentTrack }
+        if let ws = widgetSyncService {
+            Task { [weak ws] in await ws?.onPlayStateChanged(isPlaying: isPlaying, currentSong: track) }
         }
     }
 }

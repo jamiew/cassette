@@ -1148,12 +1148,17 @@ private struct PlaybackControlsView: View {
 // MARK: - Bottom toolbar
 
 private struct BottomToolbar: View {
+    @Environment(\.appContainer) private var container
     @Binding var showLyrics: Bool
     @Binding var surface: PlayerSurface
     let isLiveStream: Bool
     let secondaryContentColor: Color
     let accentColor: Color
     let playerState: PlayerState
+
+    #if os(iOS)
+    private var castManager: CastManager? { container?.castManager }
+    #endif
 
     var body: some View {
         HStack(spacing: CassetteSpacing.xxxxl) {
@@ -1173,6 +1178,14 @@ private struct BottomToolbar: View {
 
             AirPlayRouteButton(tintColor: secondaryContentColor)
                 .frame(width: 44, height: 44)
+
+            #if os(iOS)
+            CastButton(tintColor: castManager?.isCasting == true ? accentColor : secondaryContentColor)
+                .frame(width: 44, height: 44)
+                .accessibilityLabel(castManager?.isCasting == true
+                    ? "Casting to \(castManager?.deviceName ?? "a device")"
+                    : "Cast to a device")
+            #endif
 
             if !isLiveStream {
                 Button {

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CA5705A1B2C3D4E5F6A7B8C9 /* GoogleCast in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = CA5704A1B2C3D4E5F6A7B8C9 /* GoogleCast */; };
 		DB04DC0F2FB3CA280077CCD3 /* fr.mathieu-dubart.CassetteWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = DBBC62D52FB3B9A600010D3F /* fr.mathieu-dubart.CassetteWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DB2EFE092FBF805C00C2C11F /* AudioStreaming in Frameworks */ = {isa = PBXBuildFile; productRef = DB2EFE082FBF805C00C2C11F /* AudioStreaming */; };
 		DB4F5D3E3010E1F4004C2F1F /* SwiftMuse in Frameworks */ = {isa = PBXBuildFile; productRef = DB4F5D3D3010E1F4004C2F1F /* SwiftMuse */; };
@@ -144,6 +145,7 @@
 				DB2EFE092FBF805C00C2C11F /* AudioStreaming in Frameworks */,
 				DBA4A77D2F9BE3C8008BC5A9 /* SwiftSonic in Frameworks */,
 				DB4F5D3E3010E1F4004C2F1F /* SwiftMuse in Frameworks */,
+				CA5705A1B2C3D4E5F6A7B8C9 /* GoogleCast in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -234,6 +236,7 @@
 				DBA4A77C2F9BE3C8008BC5A9 /* SwiftSonic */,
 				DB2EFE082FBF805C00C2C11F /* AudioStreaming */,
 				DB4F5D3D3010E1F4004C2F1F /* SwiftMuse */,
+				CA5704A1B2C3D4E5F6A7B8C9 /* GoogleCast */,
 			);
 			productName = Cassette;
 			productReference = DBA4A7512F9BBFCB008BC5A9 /* Cassette.app */;
@@ -354,6 +357,7 @@
 				DBA4A77B2F9BE3C8008BC5A9 /* XCRemoteSwiftPackageReference "swiftsonic" */,
 				DB2EFE072FBF805C00C2C11F /* XCRemoteSwiftPackageReference "AudioStreaming" */,
 				DB4F5D3C3010E1F4004C2F1F /* XCRemoteSwiftPackageReference "SwiftMuse" */,
+				CA5703A1B2C3D4E5F6A7B8C9 /* XCRemoteSwiftPackageReference "google-cast-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = DBA4A7522F9BBFCB008BC5A9 /* Products */;
@@ -613,7 +617,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Cassette needs to access your camera to take pictures for playlist artworks";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Cassette needs access to your local network to connect to your Navidrome or Subsonic server.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Cassette needs access to your local network to connect to your Navidrome or Subsonic server and to find Chromecast devices.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Cassette needs to access your library to upload pictures for playlists";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -677,7 +681,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Cassette needs to access your camera to take pictures for playlist artworks";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Cassette needs access to your local network to connect to your Navidrome or Subsonic server.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Cassette needs access to your local network to connect to your Navidrome or Subsonic server and to find Chromecast devices.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Cassette needs to access your library to upload pictures for playlists";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -955,6 +959,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		CA5703A1B2C3D4E5F6A7B8C9 /* XCRemoteSwiftPackageReference "google-cast-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/SRGSSR/google-cast-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 4.8.4;
+			};
+		};
 		DB2EFE072FBF805C00C2C11F /* XCRemoteSwiftPackageReference "AudioStreaming" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/dimitris-c/AudioStreaming";
@@ -982,6 +994,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		CA5704A1B2C3D4E5F6A7B8C9 /* GoogleCast */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CA5703A1B2C3D4E5F6A7B8C9 /* XCRemoteSwiftPackageReference "google-cast-sdk" */;
+			productName = GoogleCast;
+		};
 		DB2EFE082FBF805C00C2C11F /* AudioStreaming */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = DB2EFE072FBF805C00C2C11F /* XCRemoteSwiftPackageReference "AudioStreaming" */;

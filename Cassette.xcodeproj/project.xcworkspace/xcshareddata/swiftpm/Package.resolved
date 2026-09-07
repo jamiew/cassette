@@ -1,5 +1,5 @@
 {
-  "originHash" : "152d64c72a704cef76b9ffaff758b7ba8dc0ff8eb3168325a80e9c5fdcfc3b44",
+  "originHash" : "c913796963802c8dd13268633f62680b8bcf173df295ce4e02524701f267635e",
   "pins" : [
     {
       "identity" : "audiostreaming",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "a729ee28fece29d80a749419d96df0693200f124",
         "version" : "1.4.4"
+      }
+    },
+    {
+      "identity" : "google-cast-sdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/SRGSSR/google-cast-sdk",
+      "state" : {
+        "revision" : "516f7111116bc412230309636842d3bbf77efdd8",
+        "version" : "4.8.4"
       }
     },
     {
