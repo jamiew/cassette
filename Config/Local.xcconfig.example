@@ -1,0 +1,7 @@
+// Copy to Config/Local.xcconfig (gitignored) to sign with your own Apple team.
+// Use `make setup` to do this for you.
+CASSETTE_DEVELOPMENT_TEAM = YOURTEAMID
+// Home-screen name. Change it to install alongside a release build.
+CASSETTE_DISPLAY_NAME = CassetteDev
+CASSETTE_BUNDLE_ID = com.youruser.cassette
+CASSETTE_APP_GROUP_ID = group.com.youruser.cassette

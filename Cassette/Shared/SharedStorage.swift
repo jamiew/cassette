@@ -6,7 +6,9 @@
 import Foundation
 
 nonisolated enum SharedStorage {
-    static let appGroupID = "group.fr.mathieu-dubart.Cassette"
+    // Set from CASSETTE_APP_GROUP_ID (Config/Cassette.xcconfig) so forks can sign with their own team.
+    static let appGroupID = Bundle.main.object(forInfoDictionaryKey: "CassetteAppGroupID") as? String
+        ?? "group.fr.mathieu-dubart.Cassette"
 
     /// UserDefaults shared between app and widget extension.
     static var defaults: UserDefaults {

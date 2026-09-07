@@ -6,7 +6,7 @@
 	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.fr.mathieu-dubart.Cassette</string>
+		<string>$(CASSETTE_APP_GROUP_ID)</string>
 	</array>
 	<key>com.apple.security.network.client</key>
 	<true/>

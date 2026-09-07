@@ -1,0 +1,13 @@
+// Shared build configuration for every target.
+//
+// The values below are the upstream defaults. To build on your own device,
+// copy Config/Local.xcconfig.example to Config/Local.xcconfig (gitignored) and
+// override them there. Apple registers bundle IDs and app groups per team, so
+// a fork cannot sign the upstream identifiers.
+
+CASSETTE_DEVELOPMENT_TEAM = LK2358MPL8
+CASSETTE_DISPLAY_NAME = Cassette
+CASSETTE_BUNDLE_ID = fr.mathieu-dubart.Cassette
+CASSETTE_APP_GROUP_ID = group.fr.mathieu-dubart.Cassette
+
+#include? "Local.xcconfig"
