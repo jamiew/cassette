@@ -124,6 +124,10 @@ implementing each numbered Étape.
 Before pushing to `origin/main`, the build must be **warning-free** (excluding
 the known acceptable warnings listed below).
 
+`make build`, `make build-mac` and `make test` wrap the commands below for day-to-day
+work. Run the raw invocations before pushing: they clean first, which the Makefile
+does not, and only a clean build re-emits every diagnostic.
+
 Run the following commands and inspect the filtered output — it must be empty:
 
 ```sh

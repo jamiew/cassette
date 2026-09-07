@@ -33,6 +33,7 @@ Licensed under MPL-2.0.
 **Listening**
 - Native iOS 18+ / macOS 15 client, with a Liquid Glass design language on iOS 26 (graceful Material fallback on iOS 18)
 - Background playback with lock screen and Control Center controls, plus AirPlay
+- Chromecast (iOS) — cast to any Google Cast speaker or TV, with the queue still driven by Cassette
 - True offline mode: download albums, playlists, or individual tracks
 - Playback powered by the AudioStreaming engine — FLAC, MP3, AAC, WAV, and Ogg/Vorbis
 - Persistent playback session — pick up where you left off after relaunching
@@ -88,14 +89,45 @@ Join the beta: <https://testflight.apple.com/join/pxCpfpxF>
    cd cassette
    open Cassette.xcodeproj
    ```
-   Swift Package Manager resolves the dependencies (SwiftSonic and AudioStreaming) automatically — no extra setup.
+   Swift Package Manager resolves the dependencies automatically — no extra setup.
 
-3. **Sign and run**
-   - Select your team in Signing & Capabilities
-   - Choose an iOS 18+ device/simulator or **My Mac**
-   - Build and run (⌘R)
+3. **Sign with your own team**
 
-4. **First launch**
+   Bundle IDs and App Groups are registered per Apple team, so a fork cannot sign the
+   upstream identifiers. Point them at your own team once, in a local file Git ignores:
+
+   ```bash
+   make setup   # copies Config/Local.xcconfig and Makefile.local from the examples
+   ```
+
+   Then edit `Config/Local.xcconfig`:
+
+   ```
+   CASSETTE_DEVELOPMENT_TEAM = YOURTEAMID
+   CASSETTE_DISPLAY_NAME = CassetteDev
+   CASSETTE_BUNDLE_ID = com.youruser.cassette
+   CASSETTE_APP_GROUP_ID = group.com.youruser.cassette
+   ```
+
+   Every target reads those four values, so nothing in the project file needs editing.
+   A different display name and bundle ID let your build sit alongside a TestFlight or
+   Homebrew install rather than replacing it.
+
+4. **Build and run**
+   - In Xcode: choose an iOS 18+ device/simulator or **My Mac**, then ⌘R
+   - Or from the terminal:
+
+   ```bash
+   make build       # iOS simulator
+   make build-mac   # macOS
+   make test        # unit tests
+   make lint        # SwiftLint, strict — the same gate CI runs
+   make device      # build, install and launch on a connected iPhone
+   ```
+
+   Set `DEVICE_NAME` in `Makefile.local` to the name of your iPhone for `make device`.
+
+5. **First launch**
    - Cassette prompts for your server URL, username, and password
    - If your server sits behind a reverse proxy that needs custom request headers, expand **Advanced** and add them
    - Tap **Connect** — Cassette verifies the connection and stores credentials in the Keychain
@@ -124,10 +156,12 @@ For developers curious about the internals:
 - **UI** — SwiftUI views with `@Observable @MainActor` view models; no business logic in views.
 - **Services** — Swift actors (`PlayerService`, `LibraryService`, `DownloadService`, `FavoritesService`, `NowPlayingService`, …) with no SwiftUI / UIKit imports.
 - **Playback** — the [AudioStreaming](https://github.com/dimitris-c/AudioStreaming) engine, wired to `MPNowPlayingInfoCenter` and `MPRemoteCommandCenter` for lock screen, Control Center, and AirPlay.
+- **Chromecast** — the [Google Cast SDK](https://github.com/SRGSSR/google-cast-sdk) (SRGSSR's SPM distribution) against the Default Media Receiver, iOS only. `CastManager` owns the session; `PlayerService` treats it as an alternative transport, so the queue, shuffle, repeat and scrobbling all behave the same whether audio comes out of the phone or the TV.
 - **Subsonic API** — [SwiftSonic](https://github.com/CassetteLab/swiftsonic) (same author, separate repo, MIT) handles all Subsonic / OpenSubsonic communication.
 - **Persistence** — SwiftData for app data (downloads, playlists, favorites cache); Keychain for credentials.
 - **Concurrency** — Swift 6 strict concurrency, `Sendable` throughout, `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`.
-- **Dependencies** — SwiftSonic and AudioStreaming (which brings Ogg/Vorbis binary frameworks for lossless decoding). That's the full list.
+- **Dependencies** — SwiftSonic, AudioStreaming (which brings Ogg/Vorbis binary frameworks for lossless decoding), SwiftMuse, and the Google Cast SDK on iOS. That's the full list.
+- **Build configuration** — signing identifiers live in `Config/Cassette.xcconfig`, overridable per checkout by an ignored `Config/Local.xcconfig`.
 
 ---
 
