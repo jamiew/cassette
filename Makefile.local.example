@@ -1,0 +1,2 @@
+# Copy to Makefile.local (gitignored) for your own device.
+DEVICE_NAME = My iPhone

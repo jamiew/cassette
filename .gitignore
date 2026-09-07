@@ -19,5 +19,7 @@ graphify-out/
 /*/.DS_Store
 /*/*/.DS_Store
 
-# Local signing overrides (see Config/Local.xcconfig.example)
+# Local signing and device overrides (see the .example files alongside them)
 Config/Local.xcconfig
+Makefile.local
+.build/
