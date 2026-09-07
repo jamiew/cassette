@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Cache SwiftPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      # A gate, not a report: .swiftlint.yml is tuned so the tree passes today,
+      # which means anything reported here comes from the change under review.
+      - name: SwiftLint
+        run: swiftlint lint --strict --reporter github-actions-logging
+
+      - name: Pick iPhone simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available | grep -m1 "iPhone" | sed 's/.*(\([A-F0-9-]*\)).*/\1/')
+          if [ -z "$UDID" ]; then
+            echo "no iPhone simulator available on this runner" >&2
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          echo "Using simulator $UDID"
+
+      - name: Build (iOS)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Cassette.xcodeproj \
+            -scheme Cassette \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath .build \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Build (macOS)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Cassette.xcodeproj \
+            -scheme Cassette \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath .build \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Cassette.xcodeproj \
+            -scheme CassetteTests \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath .build \
+            -resultBundlePath .build/TestResults.xcresult \
+            -enableCodeCoverage YES \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Code coverage summary
+        if: always()
+        run: |
+          if [ -d .build/TestResults.xcresult ]; then
+            {
+              echo "### Code coverage"
+              echo '```'
+              xcrun xccov view --report --only-targets .build/TestResults.xcresult 2>&1 || echo "coverage report unavailable"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: .build/TestResults.xcresult
+          retention-days: 7
