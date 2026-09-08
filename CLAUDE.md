@@ -8,6 +8,9 @@
 - `make test` — the `CassetteTests` scheme on the simulator. Swift Testing (`@Test` / `#expect`).
 - `make lint` — SwiftLint `--strict`. Same gate CI runs. It is clean today; keep it that way.
 - `make device` — build, install and launch on a connected iPhone. Needs `DEVICE_NAME`.
+  A locked phone refuses the launch but the install has already succeeded; that prints a
+  note rather than failing.
+- `make ci` — the whole gate in CI's order. Run this before proposing a change is done.
 
 Don't hardcode a simulator UDID. The Makefile derives one.
 

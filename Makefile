@@ -1,6 +1,6 @@
 # Cassette build commands. Run `make help`.
 
-.PHONY: help setup build build-mac test lint check-cast run run-mac device logs archive-ios clean
+.PHONY: help setup build build-mac test lint check-cast ci run run-mac device logs archive-ios clean
 
 .NOTPARALLEL:
 
@@ -28,6 +28,7 @@ help:
 	@echo "  make test        - Run the unit tests on the iOS simulator"
 	@echo "  make lint        - SwiftLint, strict (the same gate CI runs)"
 	@echo "  make check-cast  - List the Cast receivers this machine can see"
+	@echo "  make ci          - Everything CI runs: lint, both builds, tests"
 	@echo "  make run         - Build and launch on the iOS simulator"
 	@echo "  make run-mac     - Build and launch the macOS app"
 	@echo "  make device      - Build, install and launch on a connected iPhone (DEVICE_NAME=...)"
@@ -66,6 +67,11 @@ lint:
 	@swiftlint lint --strict --quiet
 	@echo "Lint clean."
 
+# The whole gate in one command, in CI's order: lint first because it is seconds,
+# so a style failure doesn't cost two builds first.
+ci: lint build build-mac test
+	@echo "All checks passed."
+
 # Deliberately outside `make test`: no receivers means an empty room, not a defect.
 check-cast:
 	@./scripts/check-cast.sh
@@ -103,7 +109,8 @@ device:
 	@xcrun devicectl device install app --device "$(DEVICE_NAME)" \
 		$$(find $(DERIVED_DATA) -name "$(SCHEME).app" -path "*/Debug-iphoneos/*" -type d | head -1)
 	@echo "Launching $(BUNDLE_ID)..."
-	@xcrun devicectl device process launch --device "$(DEVICE_NAME)" $(BUNDLE_ID)
+	@xcrun devicectl device process launch --device "$(DEVICE_NAME)" $(BUNDLE_ID) 2>&1 | tail -3 \
+		|| echo "note: installed fine, but could not launch it — unlock the phone and tap the app."
 
 logs:
 	@log stream --device "$(DEVICE_NAME)" --predicate 'process == "$(SCHEME)"' --level debug
