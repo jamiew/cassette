@@ -67,7 +67,6 @@ included:
 excluded:
   - .build
   - DerivedData
-  - thelot-ios
 
 force_cast: warning
 
