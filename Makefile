@@ -1,6 +1,6 @@
 # Cassette build commands. Run `make help`.
 
-.PHONY: help setup build build-mac test lint run run-mac device logs archive-ios clean
+.PHONY: help setup build build-mac test lint check-cast run run-mac device logs archive-ios clean
 
 .NOTPARALLEL:
 
@@ -27,6 +27,7 @@ help:
 	@echo "  make build-mac   - Build the macOS app"
 	@echo "  make test        - Run the unit tests on the iOS simulator"
 	@echo "  make lint        - SwiftLint, strict (the same gate CI runs)"
+	@echo "  make check-cast  - List the Cast receivers this machine can see"
 	@echo "  make run         - Build and launch on the iOS simulator"
 	@echo "  make run-mac     - Build and launch the macOS app"
 	@echo "  make device      - Build, install and launch on a connected iPhone (DEVICE_NAME=...)"
@@ -64,6 +65,10 @@ lint:
 	@command -v swiftlint >/dev/null 2>&1 || { echo "error: swiftlint required (brew install swiftlint)"; exit 1; }
 	@swiftlint lint --strict --quiet
 	@echo "Lint clean."
+
+# Deliberately outside `make test`: no receivers means an empty room, not a defect.
+check-cast:
+	@./scripts/check-cast.sh
 
 run: build
 	@xcrun simctl boot $(SIMULATOR_ID) 2>/dev/null || true

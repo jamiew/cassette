@@ -2405,7 +2405,7 @@ extension PlayerService {
         // can replay. Custom request headers cannot travel that way, and the Cast SDK has
         // nowhere to put them, so a server behind a header-authenticated proxy is out.
         let headers = (try? await serverService.activeCredentials().customHeaders) ?? [:]
-        guard headers.isEmpty else {
+        guard CastMediaItem.isCastable(customHeaders: headers) else {
             await MainActor.run {
                 toastService.show(
                     "Chromecast can't reach a server that needs custom headers.",

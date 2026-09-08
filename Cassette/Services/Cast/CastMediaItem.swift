@@ -62,6 +62,17 @@ nonisolated struct CastMediaItem: Sendable {
         return builder.build()
     }
 
+    /// Whether a server reached with these request headers can be cast to at all.
+    ///
+    /// Casting hands the receiver a URL and lets it do the fetching, and the Cast SDK
+    /// gives no way to attach headers to that fetch. A server behind a proxy that
+    /// authenticates on headers is therefore unreachable from the speaker, however well
+    /// it works on the phone. Subsonic's own credentials ride in the query string, so
+    /// an ordinary server casts fine.
+    static func isCastable(customHeaders: [String: String]) -> Bool {
+        customHeaders.isEmpty
+    }
+
     /// MIME type for the receiver, derived from the Subsonic file suffix.
     ///
     /// The Default Media Receiver plays MP3, AAC, FLAC, WAV and Ogg/Vorbis, and it

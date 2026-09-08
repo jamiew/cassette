@@ -67,6 +67,13 @@ Change `CASSETTE_DISPLAY_NAME` to rename a dev build, not the product name.
   put them. `castItem(for:)` detects this and shows a toast instead of failing silently.
 - Uses the Default Media Receiver (`kGCKDefaultMediaReceiverApplicationID`) — no custom
   receiver, no Google registration fee.
+- **Testing it.** The receiver→player mapping is a pure `CastManager.event(for:…)`, so
+  the transitions that matter are unit-tested rather than left to hardware. Add cases
+  there instead of reaching for a live speaker. `make check-cast` answers the separate
+  question of whether there is anything on the network to cast to; it is outside
+  `make test` because an empty room is not a defect. What stays unautomated: the SDK's
+  own session lifecycle, `GCKUICastButton` rendering, and whether audio actually comes
+  out of the speaker.
 - Expect `Upload Symbols Failed … no dSYM for GoogleCast.framework` when exporting an
   archive. The SDK is a prebuilt binary without dSYMs. Harmless.
 

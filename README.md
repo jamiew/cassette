@@ -122,6 +122,7 @@ Join the beta: <https://testflight.apple.com/join/pxCpfpxF>
    make build-mac   # macOS
    make test        # unit tests
    make lint        # SwiftLint, strict — the same gate CI runs
+   make check-cast  # list the Cast receivers this machine can see
    make device      # build, install and launch on a connected iPhone
    ```
 

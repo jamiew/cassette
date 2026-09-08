@@ -23,6 +23,18 @@ protocol CastPlaybackDelegate: AnyObject, Sendable {
     func castPlaybackStateDidChange(isPlaying: Bool) async
 }
 
+/// What one receiver status update should do to local playback.
+nonisolated enum CastStatusEvent: Equatable, Sendable {
+    /// The receiver started or resumed playing.
+    case startedPlaying
+    /// The receiver paused, possibly from a TV remote rather than from Cassette.
+    case paused
+    /// The receiver reached the end of the loaded item — advance the queue.
+    case finished
+    /// A repeat of the state already known, or a transient status during a load.
+    case ignore
+}
+
 /// Owns the Google Cast session and the receiver's media client.
 ///
 /// Cassette keeps its own queue: only the current track is ever loaded on the
@@ -129,6 +141,32 @@ final class CastManager: NSObject {
         Task { [delegate] in await delegate?.castSessionDidStart() }
     }
 
+    /// What a receiver status update means for the player.
+    ///
+    /// Pure on purpose. These transitions are the part of casting most likely to break
+    /// the queue, and they are near-impossible to provoke deliberately on real hardware:
+    /// a receiver reports `idle` both while a freshly loaded track is still buffering and
+    /// when a track genuinely ends, and treating the first as the second skips a track.
+    nonisolated static func event(
+        for playerState: GCKMediaPlayerState,
+        idleReason: GCKMediaPlayerIdleReason,
+        isAwaitingLoad: Bool,
+        isPlayingRemotely: Bool
+    ) -> CastStatusEvent {
+        switch playerState {
+        case .playing, .buffering, .loading:
+            // Only report a change; the receiver repeats its status every few seconds.
+            return isPlayingRemotely ? .ignore : .startedPlaying
+        case .paused:
+            return isPlayingRemotely ? .paused : .ignore
+        case .idle:
+            guard !isAwaitingLoad, idleReason == .finished else { return .ignore }
+            return .finished
+        default:
+            return .ignore
+        }
+    }
+
     private func sessionEnded() {
         let position = streamPosition
         let wasPlaying = isPlayingRemotely
@@ -174,25 +212,27 @@ extension CastManager: GCKRemoteMediaClientListener {
         let playerState = mediaStatus.playerState
         let idleReason = mediaStatus.idleReason
         Task { @MainActor in
-            switch playerState {
-            case .playing, .buffering, .loading:
-                isAwaitingLoad = false
-                if !isPlayingRemotely {
-                    isPlayingRemotely = true
-                    await delegate?.castPlaybackStateDidChange(isPlaying: true)
-                }
+            let event = Self.event(
+                for: playerState,
+                idleReason: idleReason,
+                isAwaitingLoad: isAwaitingLoad,
+                isPlayingRemotely: isPlayingRemotely
+            )
+            // Idle is the one state that does not clear the guard: a load reports idle
+            // on the way to buffering, and clearing here would let the next idle through.
+            if playerState != .idle { isAwaitingLoad = false }
+
+            switch event {
+            case .startedPlaying:
+                isPlayingRemotely = true
+                await delegate?.castPlaybackStateDidChange(isPlaying: true)
             case .paused:
-                isAwaitingLoad = false
-                if isPlayingRemotely {
-                    isPlayingRemotely = false
-                    await delegate?.castPlaybackStateDidChange(isPlaying: false)
-                }
-            case .idle:
-                // A fresh load reports idle before it buffers — only a genuine finish advances the queue.
-                guard !isAwaitingLoad, idleReason == .finished else { return }
+                isPlayingRemotely = false
+                await delegate?.castPlaybackStateDidChange(isPlaying: false)
+            case .finished:
                 isPlayingRemotely = false
                 await delegate?.castMediaDidFinish()
-            default:
+            case .ignore:
                 break
             }
         }
