@@ -32,7 +32,7 @@ help:
 	@echo "  make run         - Build and launch on the iOS simulator"
 	@echo "  make run-mac     - Build and launch the macOS app"
 	@echo "  make device      - Build, install and launch on a connected iPhone (DEVICE_NAME=...)"
-	@echo "  make logs        - Stream Cassette logs from the device"
+	@echo "  make logs        - Relaunch on the device with its output attached"
 	@echo "  make archive-ios - Build a signed iOS .xcarchive in $(DERIVED_DATA)"
 	@echo "  make clean       - Remove build artifacts"
 
@@ -113,7 +113,8 @@ device:
 		|| echo "note: installed fine, but could not launch it — unlock the phone and tap the app."
 
 logs:
-	@log stream --device "$(DEVICE_NAME)" --predicate 'process == "$(SCHEME)"' --level debug
+	@echo "Relaunching $(BUNDLE_ID) on $(DEVICE_NAME) attached to the console (Ctrl-C to stop)..."
+	@xcrun devicectl device process launch --device "$(DEVICE_NAME)" --console $(BUNDLE_ID)
 
 archive-ios:
 	@xcodebuild archive -project $(PROJECT) -scheme $(SCHEME) \
