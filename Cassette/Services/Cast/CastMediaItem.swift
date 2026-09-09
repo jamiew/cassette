@@ -18,6 +18,7 @@ import GoogleCast
 /// so it is built by `makeMediaInformation()` at the point of use rather than stored
 /// and carried across the player actor.
 nonisolated struct CastMediaItem: Sendable {
+    let songID: String
     let title: String
     let artist: String?
     let album: String?
@@ -27,6 +28,7 @@ nonisolated struct CastMediaItem: Sendable {
     let contentType: String
 
     init(song: DisplayableSong, streamURL: URL, artworkURL: URL?) {
+        self.songID = song.id
         self.title = song.title
         self.artist = song.artist
         self.album = song.albumName

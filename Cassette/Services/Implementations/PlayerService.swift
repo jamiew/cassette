@@ -955,12 +955,7 @@ actor PlayerService: PlayerServiceProtocol {
 
         #if os(iOS)
         if isCasting {
-            // The receiver may hold nothing (cold restore, or a stop), so reload the
-            // current track at the position the UI is already showing.
-            let (track, position) = await MainActor.run { (state.currentTrack, state.position) }
-            if let track {
-                await startCastPlayback(song: track, at: position, autoplay: true)
-            }
+            await resumeOnCast()
         } else {
             await resumeLocalEngine()
         }
@@ -976,6 +971,27 @@ actor PlayerService: PlayerServiceProtocol {
             Task { [weak ws] in await ws?.onPlayStateChanged(isPlaying: true, currentSong: resumeTrack) }
         }
     }
+
+    #if os(iOS)
+    /// Resumes on the receiver. Sends a play command when the receiver already holds this
+    /// track — re-loading it would restart it from the beginning, and a reload that fails
+    /// leaves the button looking dead. Only loads when the receiver has something else,
+    /// or nothing, which is the case after a cold restore or a stop.
+    private func resumeOnCast() async {
+        let (track, position) = await MainActor.run { (state.currentTrack, state.position) }
+        guard let track else {
+            Logger.cast.warning("resume while casting, but no current track")
+            return
+        }
+        let manager = castManager
+        let alreadyLoaded = await MainActor.run { manager?.loadedSongID } == track.id
+        if alreadyLoaded {
+            await withCast { $0.play() }
+        } else {
+            await startCastPlayback(song: track, at: position, autoplay: true)
+        }
+    }
+    #endif
 
     /// Resumes the AudioStreaming engine, restarting it from scratch on the cold-restore path.
     private func resumeLocalEngine() async {

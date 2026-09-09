@@ -25,6 +25,7 @@ extension Logger {
     nonisolated static let playlist    = Logger(subsystem: "app.cassette.playlist",   category: "PlaylistService")
     nonisolated static let radio       = Logger(subsystem: "app.cassette.radio",      category: "RadioService")
     nonisolated static let cast        = Logger(subsystem: "app.cassette.cast",       category: "CastManager")
+    nonisolated static let castSDK     = Logger(subsystem: "app.cassette.cast",       category: "CastSDK")
     nonisolated static let discover      = Logger(subsystem: "app.cassette.discover",      category: "DiscoverViewModel")
     nonisolated static let dominantColor = Logger(subsystem: "app.cassette.dominantColor", category: "DominantColorExtractor")
     nonisolated static let stats         = Logger(subsystem: "app.cassette.stats",         category: "StatsService")

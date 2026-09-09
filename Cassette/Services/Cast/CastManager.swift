@@ -49,12 +49,17 @@ final class CastManager: NSObject {
     private(set) var deviceName: String?
     /// True while the receiver is playing (as opposed to paused or idle).
     private(set) var isPlayingRemotely = false
+    /// Which track the receiver currently holds, so resuming can send a play command
+    /// instead of re-loading the same media and starting it over.
+    private(set) var loadedSongID: String?
 
     @ObservationIgnored weak var delegate: (any CastPlaybackDelegate)?
     @ObservationIgnored private var sessionManager: GCKSessionManager?
     /// Suppresses the finish callback between `loadMedia` and the receiver's first
     /// playing status — a fresh load reports `.idle` before it buffers.
     @ObservationIgnored private var isAwaitingLoad = false
+    /// Request id → a readable name, so a failure says which call failed.
+    @ObservationIgnored private var requestNames: [GCKRequestID: String] = [:]
 
     private var remoteMediaClient: GCKRemoteMediaClient? {
         sessionManager?.currentCastSession?.remoteMediaClient
@@ -67,6 +72,12 @@ final class CastManager: NSObject {
 
     /// Starts discovery and begins listening for sessions. Call once at launch.
     func configure() {
+        // The SDK reports receiver-side failures — a rejected stream URL, a receiver that
+        // never launched — only through its own logger. Without this they are invisible.
+        let logger = GCKLogger.sharedInstance()
+        logger.delegate = self
+        logger.loggingEnabled = true
+
         let criteria = GCKDiscoveryCriteria(applicationID: kGCKDefaultMediaReceiverApplicationID)
         let options = GCKCastOptions(discoveryCriteria: criteria)
         options.physicalVolumeButtonsWillControlDeviceVolume = true
@@ -88,38 +99,55 @@ final class CastManager: NSObject {
     /// Loads one track on the receiver. Cassette re-calls this for every track change.
     func load(_ item: CastMediaItem, at position: TimeInterval, autoplay: Bool) {
         guard let client = remoteMediaClient else {
-            Logger.cast.warning("load ignored — no remote media client")
+            Logger.cast.error("load ignored — session is connected but has no remote media client")
             return
         }
         isAwaitingLoad = true
         let options = GCKMediaLoadOptions()
         options.autoplay = autoplay
         options.playPosition = position
-        client.loadMedia(item.makeMediaInformation(), with: options)
+        track(client.loadMedia(item.makeMediaInformation(), with: options), as: "loadMedia")
+        loadedSongID = item.songID
         isPlayingRemotely = autoplay
-        Logger.cast.info("Loading '\(item.title, privacy: .public)' on receiver at \(position, format: .fixed(precision: 1))s")
+        Logger.cast.info("loadMedia sent for '\(item.title, privacy: .public)' at \(position, format: .fixed(precision: 1))s, host=\(item.streamURL.host ?? "?", privacy: .public):\(item.streamURL.port.map(String.init) ?? "-", privacy: .public) scheme=\(item.streamURL.scheme ?? "?", privacy: .public)")
     }
 
     func play() {
-        remoteMediaClient?.play()
+        guard let client = remoteMediaClient else {
+            Logger.cast.error("play ignored — no remote media client")
+            return
+        }
+        track(client.play(), as: "play")
         isPlayingRemotely = true
     }
 
     func pause() {
-        remoteMediaClient?.pause()
+        guard let client = remoteMediaClient else {
+            Logger.cast.error("pause ignored — no remote media client")
+            return
+        }
+        track(client.pause(), as: "pause")
         isPlayingRemotely = false
     }
 
     func seek(to position: TimeInterval) {
         let options = GCKMediaSeekOptions()
         options.interval = position
-        remoteMediaClient?.seek(with: options)
+        remoteMediaClient.map { track($0.seek(with: options), as: "seek") }
+    }
+
+    /// Every remote call returns a request that reports its outcome to a delegate and,
+    /// without one, fails in complete silence. Naming them makes the log readable.
+    private func track(_ request: GCKRequest, as name: String) {
+        request.delegate = self
+        requestNames[request.requestID] = name
     }
 
     /// Stops the item on the receiver but keeps the session, so the user stays connected.
     func stopMedia() {
         remoteMediaClient?.stop()
         isPlayingRemotely = false
+        loadedSongID = nil
     }
 
     func setDeviceVolume(_ volume: Float) {
@@ -137,7 +165,9 @@ final class CastManager: NSObject {
         deviceName = session.device.friendlyName
         isCasting = true
         session.remoteMediaClient?.add(self)
-        Logger.cast.info("Session active on '\(session.device.friendlyName ?? "unknown", privacy: .public)'")
+        Logger.cast.info("""
+            Session active on '\(session.device.friendlyName ?? "unknown", privacy: .public)'             appID=\(session.applicationMetadata?.applicationID ?? "none", privacy: .public)             mediaClient=\(session.remoteMediaClient == nil ? "MISSING" : "ok", privacy: .public)
+            """)
         Task { [delegate] in await delegate?.castSessionDidStart() }
     }
 
@@ -173,6 +203,7 @@ final class CastManager: NSObject {
         isCasting = false
         isPlayingRemotely = false
         isAwaitingLoad = false
+        loadedSongID = nil
         deviceName = nil
         Logger.cast.info("Session ended at \(position, format: .fixed(precision: 1))s")
         Task { [delegate] in await delegate?.castSessionDidEnd(at: position, wasPlaying: wasPlaying) }
@@ -201,6 +232,45 @@ extension CastManager: GCKSessionManagerListener {
             Logger.cast.error("Session failed to start: \(error.localizedDescription, privacy: .public)")
             sessionEnded()
         }
+    }
+}
+
+// MARK: - Request outcomes
+
+extension CastManager: GCKRequestDelegate {
+    nonisolated func requestDidComplete(_ request: GCKRequest) {
+        Task { @MainActor in
+            Logger.cast.info("\(self.requestNames.removeValue(forKey: request.requestID) ?? "request", privacy: .public) completed")
+        }
+    }
+
+    nonisolated func request(_ request: GCKRequest, didFailWithError error: GCKError) {
+        Task { @MainActor in
+            let name = self.requestNames.removeValue(forKey: request.requestID) ?? "request"
+            Logger.cast.error("\(name, privacy: .public) FAILED: \(error.localizedDescription, privacy: .public) (code \(error.code))")
+        }
+    }
+
+    nonisolated func request(_ request: GCKRequest, didAbortWith abortReason: GCKRequestAbortReason) {
+        Task { @MainActor in
+            let name = self.requestNames.removeValue(forKey: request.requestID) ?? "request"
+            Logger.cast.error("\(name, privacy: .public) aborted (reason \(abortReason.rawValue))")
+        }
+    }
+}
+
+// MARK: - SDK logging
+
+extension CastManager: GCKLoggerDelegate {
+    nonisolated func logMessage(
+        _ message: String,
+        at level: GCKLoggerLevel,
+        fromFunction function: String,
+        location: String
+    ) {
+        // The SDK is chatty at info; only warnings and errors say anything useful.
+        guard level == .warning || level == .error || level == .assert else { return }
+        Logger.castSDK.error("\(function, privacy: .public) \(message, privacy: .public) [\(location, privacy: .public)]")
     }
 }
 
