@@ -69,13 +69,28 @@ struct CastStatusEventTests {
     }
 
     /// Idle for any other reason is not the end of a track. Interrupted means something
-    /// replaced the media, cancelled means a stop, and error means the receiver gave up —
-    /// none of which should silently pull the next track.
+    /// replaced the media and cancelled means a stop, neither of which should silently
+    /// pull the next track.
     @Test func onlyFinishedAdvancesTheQueue() {
         #expect(event(.idle, idleReason: .interrupted, playingRemotely: true) == .ignore)
         #expect(event(.idle, idleReason: .cancelled, playingRemotely: true) == .ignore)
-        #expect(event(.idle, idleReason: .error, playingRemotely: true) == .ignore)
         #expect(event(.idle, idleReason: .none, playingRemotely: true) == .ignore)
+    }
+
+    // MARK: - Failing
+
+    /// The receiver fetches the audio itself, so a server it cannot reach fails there and
+    /// nowhere else. Treating that as "nothing happened" is what makes a cast session look
+    /// connected while the play button does nothing at all.
+    @Test func reportsAnItemTheReceiverCouldNotPlay() {
+        #expect(event(.idle, idleReason: .error, playingRemotely: true) == .failed)
+        #expect(event(.idle, idleReason: .error) == .failed)
+    }
+
+    /// A load that fails still fails while the load is outstanding — that is when a bad
+    /// stream URL shows up, before the receiver has ever reported playing.
+    @Test func reportsAFailureDuringAnOutstandingLoad() {
+        #expect(event(.idle, idleReason: .error, awaitingLoad: true) == .failed)
     }
 
     // MARK: - Everything else
@@ -104,6 +119,32 @@ struct CastMediaItemCastableTests {
     @Test func aServerNeedingRequestHeadersCannotBeCast() {
         #expect(!CastMediaItem.isCastable(customHeaders: ["CF-Access-Client-Id": "abc"]))
         #expect(!CastMediaItem.isCastable(customHeaders: ["X-Auth": "t", "X-Other": "u"]))
+    }
+}
+
+@Suite("CastMediaItem.isLikelyUnreachableByReceiver")
+struct CastReceiverReachabilityTests {
+    /// The case that cost an afternoon: a Tailscale name resolves on the phone through
+    /// MagicDNS and nowhere else, so the speaker fails to fetch and says nothing.
+    @Test func namesThatOnlyResolveOnTheSendersNetwork() {
+        #expect(CastMediaItem.isLikelyUnreachableByReceiver(host: "navidrome.example.ts.net"))
+        #expect(CastMediaItem.isLikelyUnreachableByReceiver(host: "MUSIC.EXAMPLE.TS.NET"))
+        #expect(CastMediaItem.isLikelyUnreachableByReceiver(host: "nas.local"))
+        #expect(CastMediaItem.isLikelyUnreachableByReceiver(host: "localhost"))
+        #expect(CastMediaItem.isLikelyUnreachableByReceiver(host: "127.0.0.1"))
+    }
+
+    /// A LAN address is fine — the speaker is on that LAN too — and so is anything public.
+    @Test func addressesAReceiverCanReach() {
+        #expect(!CastMediaItem.isLikelyUnreachableByReceiver(host: "192.168.1.20"))
+        #expect(!CastMediaItem.isLikelyUnreachableByReceiver(host: "music.example.com"))
+        #expect(!CastMediaItem.isLikelyUnreachableByReceiver(host: "10.0.0.5"))
+    }
+
+    /// Only a hint for the error message, never a block: the same name published through
+    /// Tailscale Funnel is public and casts fine, and the app must not refuse it.
+    @Test func theHintNeverBlocksACast() {
+        #expect(CastMediaItem.isCastable(customHeaders: [:]))
     }
 }
 #endif

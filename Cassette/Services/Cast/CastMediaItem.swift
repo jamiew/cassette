@@ -75,6 +75,19 @@ nonisolated struct CastMediaItem: Sendable {
         customHeaders.isEmpty
     }
 
+    /// Whether a receiver is unlikely to be able to resolve this host at all.
+    ///
+    /// The speaker fetches the audio itself, over its own DNS and its own network. A
+    /// Tailscale `ts.net` name, a Bonjour `.local` name or loopback all resolve on the
+    /// phone and nowhere else, so the load dies at the receiver with nothing to show for
+    /// it. This only shapes the error message and never blocks a cast: a `ts.net` name
+    /// published through Tailscale Funnel is public and works fine.
+    static func isLikelyUnreachableByReceiver(host: String) -> Bool {
+        let host = host.lowercased()
+        if host == "localhost" || host == "127.0.0.1" || host == "::1" { return true }
+        return host.hasSuffix(".ts.net") || host.hasSuffix(".local")
+    }
+
     /// MIME type for the receiver, derived from the Subsonic file suffix.
     ///
     /// The Default Media Receiver plays MP3, AAC, FLAC, WAV and Ogg/Vorbis, and it

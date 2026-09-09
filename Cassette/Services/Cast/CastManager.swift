@@ -15,10 +15,14 @@ import OSLog
 protocol CastPlaybackDelegate: AnyObject, Sendable {
     /// A receiver session became active — hand local playback over.
     func castSessionDidStart() async
-    /// The session ended. `position` is where the receiver stopped, so playback resumes there locally.
-    func castSessionDidEnd(at position: TimeInterval, wasPlaying: Bool) async
+    /// The session ended. `position` is where the receiver stopped, so playback resumes
+    /// there locally, or nil when it was holding nothing and the phone's own position stands.
+    func castSessionDidEnd(at position: TimeInterval?, wasPlaying: Bool) async
     /// The receiver finished the loaded item — advance the queue.
     func castMediaDidFinish() async
+    /// The receiver gave up on the loaded item. Nothing is playing and nothing will.
+    /// `host` is the server it was asked to fetch from, which is usually the reason.
+    func castMediaDidFail(host: String?) async
     /// Play/pause changed on the receiver side, e.g. from a TV remote.
     func castPlaybackStateDidChange(isPlaying: Bool) async
 }
@@ -31,6 +35,9 @@ nonisolated enum CastStatusEvent: Equatable, Sendable {
     case paused
     /// The receiver reached the end of the loaded item — advance the queue.
     case finished
+    /// The receiver could not play the item: unreachable URL, wrong content type, or a
+    /// codec it does not support. Silence looks identical to a dead button, so say so.
+    case failed
     /// A repeat of the state already known, or a transient status during a load.
     case ignore
 }
@@ -52,6 +59,9 @@ final class CastManager: NSObject {
     /// Which track the receiver currently holds, so resuming can send a play command
     /// instead of re-loading the same media and starting it over.
     private(set) var loadedSongID: String?
+    /// The host the receiver was last asked to fetch from. Named in the failure message
+    /// because an unreachable server is far and away the most common cause.
+    private(set) var loadedHost: String?
 
     @ObservationIgnored weak var delegate: (any CastPlaybackDelegate)?
     @ObservationIgnored private var sessionManager: GCKSessionManager?
@@ -65,9 +75,14 @@ final class CastManager: NSObject {
         sessionManager?.currentCastSession?.remoteMediaClient
     }
 
-    /// Where the receiver is in the current item. Read by the player's progress timer.
-    var streamPosition: TimeInterval {
-        remoteMediaClient?.approximateStreamPosition() ?? 0
+    /// Where the receiver is in the current item, or nil when it is holding nothing.
+    ///
+    /// Nil rather than zero on purpose: a receiver with no media reports position zero,
+    /// and feeding that to the progress timer drags the scrubber back to the start of a
+    /// track the phone still believes is playing.
+    var streamPosition: TimeInterval? {
+        guard let client = remoteMediaClient, client.mediaStatus != nil else { return nil }
+        return client.approximateStreamPosition()
     }
 
     /// Starts discovery and begins listening for sessions. Call once at launch.
@@ -77,6 +92,11 @@ final class CastManager: NSObject {
         let logger = GCKLogger.sharedInstance()
         logger.delegate = self
         logger.loggingEnabled = true
+        #if DEBUG
+        // Mirrors the SDK's own diagnostics to stdout, where `make logs` can see them.
+        // Reading the unified log off a device needs root; this does not.
+        logger.consoleLoggingEnabled = true
+        #endif
 
         let criteria = GCKDiscoveryCriteria(applicationID: kGCKDefaultMediaReceiverApplicationID)
         let options = GCKCastOptions(discoveryCriteria: criteria)
@@ -108,6 +128,7 @@ final class CastManager: NSObject {
         options.playPosition = position
         track(client.loadMedia(item.makeMediaInformation(), with: options), as: "loadMedia")
         loadedSongID = item.songID
+        loadedHost = item.streamURL.host
         isPlayingRemotely = autoplay
         Logger.cast.info("loadMedia sent for '\(item.title, privacy: .public)' at \(position, format: .fixed(precision: 1))s, host=\(item.streamURL.host ?? "?", privacy: .public):\(item.streamURL.port.map(String.init) ?? "-", privacy: .public) scheme=\(item.streamURL.scheme ?? "?", privacy: .public)")
     }
@@ -161,10 +182,22 @@ final class CastManager: NSObject {
 
     // MARK: - Session bookkeeping
 
+    /// Starts listening to a receiver's media client and asks it where it stands.
+    ///
+    /// The SDK pushes no status on connect, so without the request a session resumed from
+    /// the background leaves the play/pause button showing whatever it showed last time.
+    private func attach(_ client: GCKRemoteMediaClient) {
+        client.add(self)
+        if let status = client.mediaStatus {
+            isPlayingRemotely = [.playing, .buffering, .loading].contains(status.playerState)
+        }
+        client.requestStatus()
+    }
+
     private func sessionBecameActive(_ session: GCKCastSession) {
         deviceName = session.device.friendlyName
         isCasting = true
-        session.remoteMediaClient?.add(self)
+        session.remoteMediaClient.map(attach)
         Logger.cast.info("""
             Session active on '\(session.device.friendlyName ?? "unknown", privacy: .public)'             appID=\(session.applicationMetadata?.applicationID ?? "none", privacy: .public)             mediaClient=\(session.remoteMediaClient == nil ? "MISSING" : "ok", privacy: .public)
             """)
@@ -190,6 +223,7 @@ final class CastManager: NSObject {
         case .paused:
             return isPlayingRemotely ? .paused : .ignore
         case .idle:
+            if idleReason == .error { return .failed }
             guard !isAwaitingLoad, idleReason == .finished else { return .ignore }
             return .finished
         default:
@@ -205,7 +239,7 @@ final class CastManager: NSObject {
         isAwaitingLoad = false
         loadedSongID = nil
         deviceName = nil
-        Logger.cast.info("Session ended at \(position, format: .fixed(precision: 1))s")
+        Logger.cast.info("Session ended at \(position ?? -1, format: .fixed(precision: 1))s")
         Task { [delegate] in await delegate?.castSessionDidEnd(at: position, wasPlaying: wasPlaying) }
     }
 }
@@ -274,6 +308,35 @@ extension CastManager: GCKLoggerDelegate {
     }
 }
 
+// MARK: - Readable SDK enums
+
+private extension GCKMediaPlayerState {
+    var logName: String {
+        switch self {
+        case .unknown: return "unknown"
+        case .idle: return "idle"
+        case .playing: return "playing"
+        case .paused: return "paused"
+        case .buffering: return "buffering"
+        case .loading: return "loading"
+        @unknown default: return "other(\(rawValue))"
+        }
+    }
+}
+
+private extension GCKMediaPlayerIdleReason {
+    var logName: String {
+        switch self {
+        case .none: return "none"
+        case .finished: return "finished"
+        case .cancelled: return "cancelled"
+        case .interrupted: return "interrupted"
+        case .error: return "error"
+        @unknown default: return "other(\(rawValue))"
+        }
+    }
+}
+
 // MARK: - Remote media listener
 
 extension CastManager: GCKRemoteMediaClientListener {
@@ -281,7 +344,9 @@ extension CastManager: GCKRemoteMediaClientListener {
         guard let mediaStatus else { return }
         let playerState = mediaStatus.playerState
         let idleReason = mediaStatus.idleReason
+        let media = mediaStatus.mediaInformation == nil ? "none" : "loaded"
         Task { @MainActor in
+            Logger.cast.info("receiver status: state=\(playerState.logName, privacy: .public) idle=\(idleReason.logName, privacy: .public) media=\(media, privacy: .public)")
             let event = Self.event(
                 for: playerState,
                 idleReason: idleReason,
@@ -302,6 +367,11 @@ extension CastManager: GCKRemoteMediaClientListener {
             case .finished:
                 isPlayingRemotely = false
                 await delegate?.castMediaDidFinish()
+            case .failed:
+                isPlayingRemotely = false
+                loadedSongID = nil
+                Logger.cast.error("Receiver could not play the loaded item from \(self.loadedHost ?? "?", privacy: .public)")
+                await delegate?.castMediaDidFail(host: loadedHost)
             case .ignore:
                 break
             }

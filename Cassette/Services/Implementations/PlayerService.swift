@@ -1507,7 +1507,10 @@ actor PlayerService: PlayerServiceProtocol {
                 let audioDuration: TimeInterval
                 #if os(iOS)
                 if await self.isCasting {
-                    progress = await self.castStreamPosition()
+                    // No media on the receiver means no progress to report. Writing its zero
+                    // would rewind the scrubber under a track the user still sees as playing.
+                    guard let remote = await self.castStreamPosition() else { continue }
+                    progress = remote
                     // The receiver reports no reliable duration; keep the value from the track metadata.
                     audioDuration = 0
                 } else {
@@ -2396,9 +2399,9 @@ private extension AVAudioSession.RouteChangeReason {
 
 #if os(iOS)
 extension PlayerService {
-    /// Where the receiver is in the current item, for the progress timer.
-    func castStreamPosition() async -> TimeInterval {
-        guard let manager = castManager else { return 0 }
+    /// Where the receiver is in the current item, or nil when it holds nothing.
+    func castStreamPosition() async -> TimeInterval? {
+        guard let manager = castManager else { return nil }
         return await MainActor.run { manager.streamPosition }
     }
 
@@ -2473,8 +2476,10 @@ extension PlayerService: CastPlaybackDelegate {
     }
 
     /// The receiver went away — pick playback back up locally where it stopped.
-    func castSessionDidEnd(at position: TimeInterval, wasPlaying: Bool) async {
+    func castSessionDidEnd(at receiverPosition: TimeInterval?, wasPlaying: Bool) async {
         isCasting = false
+        // A receiver holding nothing reports zero; the phone's own position is the honest one.
+        let position = if let receiverPosition { receiverPosition } else { await MainActor.run { state.position } }
         guard let track = await MainActor.run(body: { state.currentTrack }),
               let serverId = await MainActor.run(body: { serverService.state.activeServer?.id }),
               let source = try? await mediaResolver.resolve(songId: track.id, serverId: serverId) else {
@@ -2509,6 +2514,24 @@ extension PlayerService: CastPlaybackDelegate {
     /// The receiver reached the end of the item — Cassette owns the queue, so advance it.
     func castMediaDidFinish() async {
         await handleEndOfTrack()
+    }
+
+    /// The receiver could not play what it was given. Almost always it cannot reach the
+    /// stream URL: the speaker fetches the audio itself, so a server that only answers on
+    /// a VPN, a `.local` name, or a certificate the phone trusts and the speaker does not
+    /// is out of its reach. Say so rather than leaving a play button that does nothing.
+    func castMediaDidFail(host: String?) async {
+        stopProgressTimer()
+        let server = host ?? "your server"
+        let message = if let host, CastMediaItem.isLikelyUnreachableByReceiver(host: host) {
+            "The Chromecast can't reach \(host). That name only resolves on your own network, not on the speaker."
+        } else {
+            "The Chromecast couldn't play this track. Check that it can reach \(server)."
+        }
+        await MainActor.run {
+            state.playbackState = .paused
+            toastService.show(message, style: .error, duration: 8.0)
+        }
     }
 
     /// Play/pause changed on the receiver, e.g. from a TV remote or the Cast dialog.

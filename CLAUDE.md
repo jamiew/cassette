@@ -68,6 +68,16 @@ Change `CASSETTE_DISPLAY_NAME` to rename a dev build, not the product name.
   which is what makes this work at all.
 - **Servers needing custom request headers cannot be cast.** The Cast SDK has nowhere to
   put them. `castItem(for:)` detects this and shows a toast instead of failing silently.
+- **The receiver must be able to reach the server on its own.** It fetches the audio with
+  its own DNS and its own network, so a server that only answers on the phone is invisible
+  to it: a Tailscale `ts.net` name, a Bonjour `.local` name, loopback, or a certificate the
+  phone trusts and the speaker does not. This is the single most common reason casting
+  "connects but does nothing". `CastMediaItem.isLikelyUnreachableByReceiver(host:)` only
+  shapes the error message — never block a cast on it, because the same `ts.net` name
+  published through Tailscale Funnel is public and works.
+- **A receiver that fails says so once, quietly.** It goes idle with `idleReason == .error`
+  and nothing else. Map that to `CastStatusEvent.failed` and surface it; treating it as a
+  state to ignore is what makes a broken cast look like a dead play button.
 - Uses the Default Media Receiver (`kGCKDefaultMediaReceiverApplicationID`) — no custom
   receiver, no Google registration fee.
 - **Testing it.** The receiver→player mapping is a pure `CastManager.event(for:…)`, so
@@ -77,6 +87,12 @@ Change `CASSETTE_DISPLAY_NAME` to rename a dev build, not the product name.
   `make test` because an empty room is not a defect. What stays unautomated: the SDK's
   own session lifecycle, `GCKUICastButton` rendering, and whether audio actually comes
   out of the speaker.
+- **The simulator cannot cast.** The SDK's discovery needs real multicast, so the device
+  picker there always reads "No devices available". `CassetteUITests/CastFlowUITests`
+  drives the whole flow up to that point and is deliberately outside `make test`; finishing
+  the session needs hardware. To see what a real receiver was told, join it as a second
+  sender from the Mac (`pychromecast`, or `catt`) and read its media status — that is how
+  you tell "the app never sent a load" apart from "the speaker refused it".
 - Expect `Upload Symbols Failed … no dSYM for GoogleCast.framework` when exporting an
   archive. The SDK is a prebuilt binary without dSYMs. Harmless.
 
