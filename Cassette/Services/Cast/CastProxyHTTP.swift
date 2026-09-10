@@ -11,6 +11,17 @@ import Foundation
 /// This is not a general web server. It answers exactly one shape of request — the
 /// Default Media Receiver asking for a media file, usually with a byte range — and
 /// everything here exists to get that one exchange right.
+///
+/// Ranges are the part that has to be exact. A Cast receiver seeks by sending
+/// `Range: bytes=<start>-<end>` and expects `206` with a matching `Content-Range`; served
+/// a plain `200` it assumes seeking is unsupported and refetches from zero. The rules are
+/// RFC 7233 (https://datatracker.ietf.org/doc/html/rfc7233), summarised readably at
+/// https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Range_requests. Note that
+/// ranges are inclusive at both ends, which is the detail most easily got wrong.
+///
+/// No CORS headers here on purpose. Google requires them for adaptive streams and for
+/// subtitle tracks (https://developers.google.com/cast/docs/media); plain progressive
+/// audio, which is all Cassette relays, needs none.
 nonisolated enum CastProxyHTTP {
     /// A byte range as the client asked for it, before the file size is known.
     enum ByteRange: Equatable, Sendable {

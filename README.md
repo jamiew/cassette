@@ -33,7 +33,7 @@ Licensed under MPL-2.0.
 **Listening**
 - Native iOS 18+ / macOS 15 client, with a Liquid Glass design language on iOS 26 (graceful Material fallback on iOS 18)
 - Background playback with lock screen and Control Center controls, plus AirPlay
-- Chromecast (iOS) — cast to any Google Cast speaker or TV, with the queue still driven by Cassette
+- Chromecast (iOS) — cast to any Google Cast speaker or TV, with the queue still driven by Cassette. Works even when the speaker cannot reach your server itself, such as a Navidrome behind Tailscale, because Cassette will relay the audio from your phone
 - True offline mode: download albums, playlists, or individual tracks
 - Playback powered by the AudioStreaming engine — FLAC, MP3, AAC, WAV, and Ogg/Vorbis
 - Persistent playback session — pick up where you left off after relaunching
@@ -158,7 +158,7 @@ For developers curious about the internals:
 - **UI** — SwiftUI views with `@Observable @MainActor` view models; no business logic in views.
 - **Services** — Swift actors (`PlayerService`, `LibraryService`, `DownloadService`, `FavoritesService`, `NowPlayingService`, …) with no SwiftUI / UIKit imports.
 - **Playback** — the [AudioStreaming](https://github.com/dimitris-c/AudioStreaming) engine, wired to `MPNowPlayingInfoCenter` and `MPRemoteCommandCenter` for lock screen, Control Center, and AirPlay.
-- **Chromecast** — the [Google Cast SDK](https://github.com/SRGSSR/google-cast-sdk) (SRGSSR's SPM distribution) against the Default Media Receiver, iOS only. `CastManager` owns the session; `PlayerService` treats it as an alternative transport, so the queue, shuffle, repeat and scrobbling all behave the same whether audio comes out of the phone or the TV.
+- **Chromecast** — the [Google Cast SDK](https://github.com/SRGSSR/google-cast-sdk) (SRGSSR's SPM distribution) against the Default Media Receiver, iOS only. `CastManager` owns the session; `PlayerService` treats it as an alternative transport, so the queue, shuffle, repeat and scrobbling all behave the same whether audio comes out of the phone or the TV. A receiver fetches the audio itself, so when it cannot reach your server — a VPN address, a header-authenticated proxy, a certificate only the phone trusts — `CastProxyServer` serves the track from the phone instead, the same way [VLC](https://mfkl.github.io/chromecast/2018/10/21/High-performance-cross-platform-streaming-with-libvlc-and-Chromecast-on-.NET.html) and [BubbleUPnP](https://bubblesoftapps.com/bubbleupnpserver2/docs/features_and_requirements.html) do.
 - **Subsonic API** — [SwiftSonic](https://github.com/CassetteLab/swiftsonic) (same author, separate repo, MIT) handles all Subsonic / OpenSubsonic communication.
 - **Persistence** — SwiftData for app data (downloads, playlists, favorites cache); Keychain for credentials.
 - **Concurrency** — Swift 6 strict concurrency, `Sendable` throughout, `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`.

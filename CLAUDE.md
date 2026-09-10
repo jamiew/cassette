@@ -111,6 +111,24 @@ Change `CASSETTE_DISPLAY_NAME` to rename a dev build, not the product name.
 - Expect `Upload Symbols Failed … no dSYM for GoogleCast.framework` when exporting an
   archive. The SDK is a prebuilt binary without dSYMs. Harmless.
 
+### Further reading
+
+- [Supported Media for Google Cast](https://developers.google.com/cast/docs/media) — codecs
+  and containers the receiver plays, and the cases that need CORS (adaptive streams and
+  subtitle tracks; plain progressive audio does not).
+- [`MediaInformation`](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages.MediaInformation)
+  — `contentUrl`/`contentId` is the URL the receiver is given, which is the whole reason the
+  relay exists.
+- [RFC 7233](https://datatracker.ietf.org/doc/html/rfc7233) and
+  [MDN on range requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Range_requests)
+  — what `CastProxyHTTP` implements. Ranges are inclusive at both ends.
+- [libvlc and Chromecast](https://mfkl.github.io/chromecast/2018/10/21/High-performance-cross-platform-streaming-with-libvlc-and-Chromecast-on-.NET.html)
+  — VLC's version of the same technique, and the clearest statement of why it is needed:
+  "VLC has to be a http server like youtube.com". VLC also transcodes; Cassette does not
+  need to, because a Subsonic server already serves formats the receiver plays.
+- [BubbleUPnP Server](https://bubblesoftapps.com/bubbleupnpserver2/docs/features_and_requirements.html)
+  — the same idea for DLNA renderers that cannot reach a media server directly.
+
 ## Tests
 
 - **Swift Testing, not XCTest** (`CassetteUITests` is the only XCTest holdout).

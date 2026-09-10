@@ -121,6 +121,67 @@ struct CastProxyServerTests {
         #expect((response as? HTTPURLResponse)?.statusCode == 404)
     }
 
+    // MARK: - Relaying a remote source
+
+    /// Points the proxy at itself: one item is a file on disk, the second relays the first
+    /// over HTTP. That exercises the upstream path — the one a Subsonic server takes —
+    /// without needing a server, a network, or a Chromecast.
+    private func chained(
+        _ file: URL,
+        on server: CastProxyServer,
+        declaring contentType: String = "audio/mpeg"
+    ) async throws -> URLRequest {
+        let origin = try #require(await server.publish(
+            CastProxyServer.Item(source: file, headers: [:], contentType: "audio/mpeg")
+        ))
+        let relayed = try #require(await server.publish(
+            CastProxyServer.Item(source: origin, headers: [:], contentType: contentType)
+        ))
+        return loopback(relayed)
+    }
+
+    @Test func relaysARemoteSourceWholeAndIntact() async throws {
+        let server = CastProxyServer()
+        defer { Task { await server.stop() } }
+        let file = try makeFile()
+        defer { try? FileManager.default.removeItem(at: file.url) }
+
+        let (data, response) = try await URLSession.shared.data(for: chained(file.url, on: server))
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        #expect(data == file.bytes)
+    }
+
+    /// Seeking has to survive the extra hop: the receiver's range goes upstream and the
+    /// upstream's partial answer comes back, rather than the relay restarting the track.
+    @Test func forwardsARangeThroughToTheUpstream() async throws {
+        let server = CastProxyServer()
+        defer { Task { await server.stop() } }
+        let file = try makeFile()
+        defer { try? FileManager.default.removeItem(at: file.url) }
+
+        var request = try await chained(file.url, on: server)
+        request.setValue("bytes=2000-2999", forHTTPHeaderField: "Range")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let http = try #require(response as? HTTPURLResponse)
+
+        #expect(http.statusCode == 206)
+        #expect(data == file.bytes[2000...2999])
+        #expect(http.value(forHTTPHeaderField: "Content-Range") == "bytes 2000-2999/70000")
+    }
+
+    /// A Subsonic server that transcodes returns bytes the file suffix no longer describes,
+    /// so what the upstream says it sent beats anything Cassette guessed.
+    @Test func prefersTheUpstreamContentTypeOverTheGuess() async throws {
+        let server = CastProxyServer()
+        defer { Task { await server.stop() } }
+        let file = try makeFile()
+        defer { try? FileManager.default.removeItem(at: file.url) }
+
+        let request = try await chained(file.url, on: server, declaring: "application/octet-stream")
+        let (_, response) = try await URLSession.shared.data(for: request)
+        #expect((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") == "audio/mpeg")
+    }
+
     /// Every publish mints a fresh token, so a URL cannot be inferred from an earlier one.
     @Test func mintsADistinctTokenEachTime() async throws {
         let server = CastProxyServer()
