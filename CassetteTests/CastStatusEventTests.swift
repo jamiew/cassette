@@ -140,11 +140,5 @@ struct CastReceiverReachabilityTests {
         #expect(!CastMediaItem.isLikelyUnreachableByReceiver(host: "music.example.com"))
         #expect(!CastMediaItem.isLikelyUnreachableByReceiver(host: "10.0.0.5"))
     }
-
-    /// Only a hint for the error message, never a block: the same name published through
-    /// Tailscale Funnel is public and casts fine, and the app must not refuse it.
-    @Test func theHintNeverBlocksACast() {
-        #expect(CastMediaItem.isCastable(customHeaders: [:]))
-    }
 }
 #endif

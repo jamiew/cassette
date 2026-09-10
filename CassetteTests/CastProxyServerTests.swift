@@ -134,8 +134,12 @@ struct CastProxyServerTests {
         let origin = try #require(await server.publish(
             CastProxyServer.Item(source: file, headers: [:], contentType: "audio/mpeg")
         ))
+        // Point the relay at loopback rather than the published LAN address: whether this
+        // machine can reach its own en0 is a fact about the machine, and a test that
+        // depends on it fails on a build runner for reasons that are not a defect.
+        let upstream = try #require(loopback(origin).url)
         let relayed = try #require(await server.publish(
-            CastProxyServer.Item(source: origin, headers: [:], contentType: contentType)
+            CastProxyServer.Item(source: upstream, headers: [:], contentType: contentType)
         ))
         return loopback(relayed)
     }

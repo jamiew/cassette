@@ -59,11 +59,11 @@ actor PlayerService: PlayerServiceProtocol {
     /// Set once a receiver has failed to fetch directly. Stays set for the rest of the
     /// session: what one track could not reach, the next one will not reach either.
     private var castUsesProxy = false
+    /// Whether this session has already told the user it is relaying. Once is enough.
+    private var castRelayAnnounced = false
     /// Mirrors `CastManager.isCasting` so the playback hot path avoids a MainActor hop.
     /// Kept in sync by the CastPlaybackDelegate callbacks.
     private var isCasting = false
-    #endif
-    #if os(iOS)
     private var interruptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
     /// Stored so pause()/stop() can cancel it before calling setActive(false),
@@ -2467,7 +2467,25 @@ extension PlayerService {
             )
         }
         Logger.cast.info("Relaying '\(song.title, privacy: .public)' through the phone (local=\(local != nil))")
+        await announceRelayOnce()
         return CastMediaItem(song: song, streamURL: relayed, artworkURL: relayedArtwork)
+    }
+
+    /// Says once per session that the phone is doing the serving.
+    ///
+    /// Worth interrupting for, because the consequence is not obvious: the relay lives
+    /// only as long as the app, so locking the phone stops the music. Playing directly
+    /// does not have that problem and says nothing.
+    private func announceRelayOnce() async {
+        guard !castRelayAnnounced else { return }
+        castRelayAnnounced = true
+        await MainActor.run {
+            toastService.show(
+                "Your speaker can't reach your server, so Cassette is sending the audio. Keep the app open.",
+                style: .info,
+                duration: 6.0
+            )
+        }
     }
 
     /// A copy of this track already on the device, if there is one.
@@ -2517,6 +2535,7 @@ extension PlayerService: CastPlaybackDelegate {
     func castSessionDidEnd(at receiverPosition: TimeInterval?, wasPlaying: Bool) async {
         isCasting = false
         castUsesProxy = false
+        castRelayAnnounced = false
         await castProxy.stop()
         // A receiver holding nothing reports zero; the phone's own position is the honest one.
         let position = if let receiverPosition { receiverPosition } else { await MainActor.run { state.position } }
