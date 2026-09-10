@@ -107,6 +107,24 @@ struct CastStatusEventTests {
     }
 }
 
+/// Used both to seed the play/pause button when a session is adopted and to decide what a
+/// resumed session is doing. Getting it wrong shows a paused button over a playing speaker.
+@Suite("CastManager.isPlaying")
+struct CastIsPlayingTests {
+    /// A receiver passes through buffering and loading on its way to audio.
+    @Test func countsTheStatesOnTheWayToSound() {
+        #expect(CastManager.isPlaying(.playing))
+        #expect(CastManager.isPlaying(.buffering))
+        #expect(CastManager.isPlaying(.loading))
+    }
+
+    @Test func rejectsTheStatesThatAreSilent() {
+        #expect(!CastManager.isPlaying(.paused))
+        #expect(!CastManager.isPlaying(.idle))
+        #expect(!CastManager.isPlaying(.unknown))
+    }
+}
+
 @Suite("CastMediaItem.isCastable")
 struct CastMediaItemCastableTests {
     /// Subsonic credentials travel in the query string, which the receiver replays as-is.

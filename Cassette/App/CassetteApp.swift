@@ -169,6 +169,12 @@ struct CassetteApp: App {
                 Task { await c.playerService.saveCurrentPosition() }
                 Logger.session.info("App inactive — position flushed (iOS kill guard)")
             }
+            // Coming back from the lock screen, the app's idea of the receiver can be
+            // stale: the SDK pushes no status of its own, so a track that ended or a
+            // volume changed elsewhere stays invisible until something asks.
+            if newPhase == .active, let c = container, c.castManager.isCasting {
+                c.castManager.refreshFromReceiver()
+            }
             #endif
             guard newPhase == .background, let c = container else { return }
             let snapshot = SessionPayload(

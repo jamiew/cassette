@@ -15,6 +15,9 @@ import OSLog
 protocol CastPlaybackDelegate: AnyObject, Sendable {
     /// A receiver session became active — hand local playback over.
     func castSessionDidStart() async
+    /// A session the SDK had already established came back, after the phone slept or the
+    /// network blinked. The receiver may have carried on the whole time.
+    func castSessionDidResume() async
     /// The session ended. `position` is where the receiver stopped, so playback resumes
     /// there locally, or nil when it was holding nothing and the phone's own position stands.
     func castSessionDidEnd(at position: TimeInterval?, wasPlaying: Bool) async
@@ -62,6 +65,10 @@ final class CastManager: NSObject {
     /// The host the receiver was last asked to fetch from. Named in the failure message
     /// because an unreachable server is far and away the most common cause.
     private(set) var loadedHost: String?
+    /// The receiver's own volume, which is not the phone's. The hardware buttons drive
+    /// this while a session is live, so it is what the player's slider should show.
+    private(set) var deviceVolume: Float = 0.5
+    private(set) var isMuted = false
 
     @ObservationIgnored weak var delegate: (any CastPlaybackDelegate)?
     @ObservationIgnored private var sessionManager: GCKSessionManager?
@@ -70,9 +77,31 @@ final class CastManager: NSObject {
     @ObservationIgnored private var isAwaitingLoad = false
     /// Request id → a readable name, so a failure says which call failed.
     @ObservationIgnored private var requestNames: [GCKRequestID: String] = [:]
+    /// Coalesces a slider drag into one volume command every so often.
+    @ObservationIgnored private var volumeSendTask: Task<Void, Never>?
 
     private var remoteMediaClient: GCKRemoteMediaClient? {
         sessionManager?.currentCastSession?.remoteMediaClient
+    }
+
+    /// Whether the receiver is holding media. Distinguishes a session that carried on
+    /// without us from one that has nothing to carry on with.
+    var receiverHasMedia: Bool {
+        remoteMediaClient?.mediaStatus?.mediaInformation != nil
+    }
+
+    /// Whether the receiver is playing right now, as it reports rather than as we assume.
+    var receiverIsPlaying: Bool {
+        guard let state = remoteMediaClient?.mediaStatus?.playerState else { return false }
+        return Self.isPlaying(state)
+    }
+
+    /// Whether a receiver in this state is producing sound, or about to be.
+    ///
+    /// Buffering and loading count. A receiver passes through them on the way to audio,
+    /// and waiting for `.playing` leaves the phone showing paused over a playing speaker.
+    nonisolated static func isPlaying(_ state: GCKMediaPlayerState) -> Bool {
+        state == .playing || state == .buffering || state == .loading
     }
 
     /// Where the receiver is in the current item, or nil when it is holding nothing.
@@ -171,8 +200,39 @@ final class CastManager: NSObject {
         loadedSongID = nil
     }
 
+    /// Sets the receiver's volume, showing it immediately and sending it shortly after.
+    ///
+    /// Dragging a slider produces a value per frame, and a receiver answers each one over
+    /// the network. Coalescing to the latest keeps the slider smooth without shouting.
     func setDeviceVolume(_ volume: Float) {
-        sessionManager?.currentCastSession?.setDeviceVolume(max(0, min(1, volume)))
+        let clamped = max(0, min(1, volume))
+        deviceVolume = clamped
+        volumeSendTask?.cancel()
+        volumeSendTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled, let self else { return }
+            sessionManager?.currentCastSession?.setDeviceVolume(clamped)
+        }
+    }
+
+    func toggleMute() {
+        guard let session = sessionManager?.currentCastSession else { return }
+        isMuted.toggle()
+        session.setDeviceMuted(isMuted)
+    }
+
+    /// Asks the receiver where it stands. Call when the app comes back to the foreground:
+    /// the SDK pushes nothing on its own, so anything that changed while the phone was
+    /// asleep — a track that ended, a volume nudged from another sender — is invisible
+    /// until something asks.
+    func refreshFromReceiver() {
+        guard let session = sessionManager?.currentCastSession else { return }
+        deviceVolume = session.currentDeviceVolume
+        isMuted = session.currentDeviceMuted
+        if let client = session.remoteMediaClient {
+            attach(client)
+        }
+        Logger.cast.info("Resynced with '\(session.device.friendlyName ?? "receiver", privacy: .public)'")
     }
 
     /// Ends the session and stops the receiver. A plain `endSession` leaves the TV playing.
@@ -189,19 +249,27 @@ final class CastManager: NSObject {
     private func attach(_ client: GCKRemoteMediaClient) {
         client.add(self)
         if let status = client.mediaStatus {
-            isPlayingRemotely = [.playing, .buffering, .loading].contains(status.playerState)
+            isPlayingRemotely = Self.isPlaying(status.playerState)
         }
         client.requestStatus()
     }
 
-    private func sessionBecameActive(_ session: GCKCastSession) {
+    private func sessionBecameActive(_ session: GCKCastSession, resumed: Bool = false) {
         deviceName = session.device.friendlyName
         isCasting = true
+        deviceVolume = session.currentDeviceVolume
+        isMuted = session.currentDeviceMuted
         session.remoteMediaClient.map(attach)
         Logger.cast.info("""
             Session active on '\(session.device.friendlyName ?? "unknown", privacy: .public)'             appID=\(session.applicationMetadata?.applicationID ?? "none", privacy: .public)             mediaClient=\(session.remoteMediaClient == nil ? "MISSING" : "ok", privacy: .public)
             """)
-        Task { [delegate] in await delegate?.castSessionDidStart() }
+        Task { [delegate] in
+            if resumed {
+                await delegate?.castSessionDidResume()
+            } else {
+                await delegate?.castSessionDidStart()
+            }
+        }
     }
 
     /// What a receiver status update means for the player.
@@ -238,7 +306,10 @@ final class CastManager: NSObject {
         isPlayingRemotely = false
         isAwaitingLoad = false
         loadedSongID = nil
+        loadedHost = nil
         deviceName = nil
+        volumeSendTask?.cancel()
+        volumeSendTask = nil
         Logger.cast.info("Session ended at \(position ?? -1, format: .fixed(precision: 1))s")
         Task { [delegate] in await delegate?.castSessionDidEnd(at: position, wasPlaying: wasPlaying) }
     }
@@ -254,11 +325,37 @@ extension CastManager: GCKSessionManagerListener {
     }
 
     nonisolated func sessionManager(_: GCKSessionManager, didResumeCastSession session: GCKCastSession) {
-        Task { @MainActor in sessionBecameActive(session) }
+        Task { @MainActor in sessionBecameActive(session, resumed: true) }
     }
 
     nonisolated func sessionManager(_: GCKSessionManager, didEnd _: GCKCastSession, withError _: Error?) {
         Task { @MainActor in sessionEnded() }
+    }
+
+    /// The receiver's volume changed, including from the phone's own hardware buttons —
+    /// the SDK routes those to the device while a session is live. Without this the
+    /// player's slider would sit still while the speaker got louder.
+    nonisolated func sessionManager(
+        _: GCKSessionManager,
+        castSession _: GCKCastSession,
+        didReceiveDeviceVolume volume: Float,
+        muted: Bool
+    ) {
+        Task { @MainActor in
+            deviceVolume = volume
+            isMuted = muted
+        }
+    }
+
+    /// A suspended session is not an ended one: the SDK resumes it, and until it does the
+    /// app is talking to nothing. Logged because it is the shape of most "it stopped when
+    /// my phone slept" reports.
+    nonisolated func sessionManager(
+        _: GCKSessionManager,
+        didSuspend _: GCKCastSession,
+        with reason: GCKConnectionSuspendReason
+    ) {
+        Logger.cast.info("Session suspended (reason \(reason.rawValue))")
     }
 
     nonisolated func sessionManager(_: GCKSessionManager, didFailToStart _: GCKCastSession, withError error: Error) {

@@ -2543,6 +2543,42 @@ extension PlayerService: CastPlaybackDelegate {
         if wasPlaying { startProgressTimer() }
     }
 
+    /// A session the SDK re-established came back, after the phone slept or the network
+    /// blinked. The receiver has usually been playing the whole time, so adopt what it is
+    /// doing rather than reloading the track — a reload restarts it from the beginning,
+    /// which is what waking the phone used to do.
+    func castSessionDidResume() async {
+        isCasting = true
+        cancelFadeTasks()
+        cancelPendingPrefetch()
+        audioPlayer.stop()
+
+        guard let manager = castManager else { return }
+        let (hasMedia, isPlaying) = await MainActor.run { (manager.receiverHasMedia, manager.receiverIsPlaying) }
+        guard hasMedia else {
+            // Nothing on the receiver to adopt: either it was stopped while we were away,
+            // or this is a cold launch and whatever it holds is from a session that is
+            // gone. Load the current track the ordinary way.
+            let (track, position, wasPlaying) = await MainActor.run {
+                (state.currentTrack, state.position, state.playbackState == .playing)
+            }
+            guard let track else { return }
+            await startCastPlayback(song: track, at: position, autoplay: wasPlaying)
+            if wasPlaying { startProgressTimer() }
+            return
+        }
+
+        Logger.cast.info("Adopted a resumed session — receiver is \(isPlaying ? "playing" : "paused", privacy: .public)")
+        await MainActor.run { state.playbackState = isPlaying ? .playing : .paused }
+        if isPlaying {
+            startProgressTimer()
+            startPositionSaveTimer()
+        } else {
+            stopProgressTimer()
+            stopPositionSaveTimer()
+        }
+    }
+
     /// The receiver went away — pick playback back up locally where it stopped.
     func castSessionDidEnd(at receiverPosition: TimeInterval?, wasPlaying: Bool) async {
         isCasting = false

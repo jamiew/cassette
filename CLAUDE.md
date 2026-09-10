@@ -91,6 +91,17 @@ Change `CASSETTE_DISPLAY_NAME` to rename a dev build, not the product name.
   playback or a direct cast, and owns its own `AVAudioEngine` so it cannot disturb the
   `AudioStreaming` player. A relayed cast still ends if the app is force-quit or the phone
   leaves the network; a direct cast survives both.
+- **Starting a session and resuming one are different.** `didStart` hands the current
+  track over; `didResumeCastSession` must not, because the receiver has usually been
+  playing the whole time and reloading restarts the track. `castSessionDidResume` adopts
+  what the receiver reports instead, and only loads when it is holding nothing.
+- **The SDK pushes no status on its own.** Anything that changed while the phone was
+  asleep is invisible until something asks, so the app calls `refreshFromReceiver()` when
+  it returns to the foreground.
+- **The receiver's volume is not the phone's.** `CastManager.deviceVolume` tracks it, the
+  player's slider binds to that while casting rather than to `SystemVolumeView`, and the
+  hardware buttons move it because `physicalVolumeButtonsWillControlDeviceVolume` routes
+  them to the receiver during a session. Slider drags are coalesced before they are sent.
 - **A receiver that fails says so once, quietly.** It goes idle with `idleReason == .error`
   and nothing else. Map that to `CastStatusEvent.failed` and surface it; treating it as a
   state to ignore is what makes a broken cast look like a dead play button.

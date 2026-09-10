@@ -1255,17 +1255,35 @@ private struct AirPlayRouteButton: View {
 private struct VolumeSection: View {
     let contentColor: Color
     let secondaryContentColor: Color
+    #if os(iOS)
+    @Environment(\.appContainer) private var container
+    #endif
 
     var body: some View {
         #if os(iOS)
         HStack(spacing: CassetteSpacing.m) {
-            Image(systemName: "speaker.fill")
-                .font(.caption)
-                .foregroundStyle(secondaryContentColor)
-                .frame(width: 20)
-                .accessibilityHidden(true)
+            // While casting this is the receiver's volume, not the phone's. Muting is on
+            // the speaker glyph because the receiver has a mute the phone slider has not.
+            if let cast = container?.castManager, cast.isCasting {
+                Button { cast.toggleMute() } label: {
+                    Image(systemName: cast.isMuted ? "speaker.slash.fill" : "speaker.fill")
+                        .font(.caption)
+                        .foregroundStyle(secondaryContentColor)
+                        .frame(width: 20)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(cast.isMuted ? "Unmute \(cast.deviceName ?? "the speaker")" : "Mute \(cast.deviceName ?? "the speaker")")
 
-            SystemVolumeView(contentColor: contentColor)
+                CastVolumeSlider(castManager: cast, contentColor: contentColor)
+            } else {
+                Image(systemName: "speaker.fill")
+                    .font(.caption)
+                    .foregroundStyle(secondaryContentColor)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+
+                SystemVolumeView(contentColor: contentColor)
+            }
 
             Image(systemName: "speaker.wave.3.fill")
                 .font(.caption)
@@ -1276,3 +1294,31 @@ private struct VolumeSection: View {
         #endif
     }
 }
+
+#if os(iOS)
+/// The receiver's volume. Separate from `SystemVolumeView` because the two control
+/// different things: that one drives the phone's output, which while casting is silent.
+///
+/// It also moves on its own. The Cast SDK routes the phone's hardware volume buttons to
+/// the receiver during a session, and the receiver reports back, so pressing them here
+/// shows what it did rather than nothing at all.
+private struct CastVolumeSlider: View {
+    let castManager: CastManager
+    let contentColor: Color
+
+    var body: some View {
+        ProgressSlider(
+            value: Binding(
+                get: { TimeInterval(castManager.deviceVolume) },
+                set: { castManager.setDeviceVolume(Float($0)) }
+            ),
+            total: 1.0,
+            onEditingChanged: { _ in },
+            trackColor: contentColor.opacity(0.2),
+            fillColor: contentColor.opacity(0.95)
+        )
+        .accessibilityLabel("\(castManager.deviceName ?? "Speaker") volume")
+        .accessibilityValue("\(Int(castManager.deviceVolume * 100))%")
+    }
+}
+#endif
