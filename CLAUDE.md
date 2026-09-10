@@ -107,6 +107,18 @@ Change `CASSETTE_DISPLAY_NAME` to rename a dev build, not the product name.
   state to ignore is what makes a broken cast look like a dead play button.
 - Uses the Default Media Receiver (`kGCKDefaultMediaReceiverApplicationID`) — no custom
   receiver, no Google registration fee.
+- **Style the SDK's own sheets.** `styleCastUI()` themes the device picker and connection
+  controller from the asset catalog, so they follow light and dark mode. This is not
+  cosmetic: the connection sheet's toolbar button defaults to dark-on-dark, which leaves
+  "Stop Casting" invisible and the user connected with no apparent way out. The sheet's
+  play/pause artwork is deliberately left alone — overriding it only helps live streams,
+  where the SDK draws a stop glyph because pause is not a real option.
+- **Never hide the cast button when no devices are found.** The SDK manages its own
+  visibility, and its picker shows a useful "looking for devices" state that a hidden
+  button denies. Discovery counts are logged and nothing more.
+- **`suspendSessionsWhenBackgrounded` is `false` here** because Cassette keeps playing when
+  backgrounded, so its session must too. An app that only casts while on screen wants the
+  opposite.
 - **Testing the relay needs no Chromecast.** `CastProxyServerTests` runs the real server
   over a socket and collects from it the way a receiver would, so ranges, HEAD and token
   handling are covered headlessly in `make test`. `CastProxyHTTPTests` covers the parsing.

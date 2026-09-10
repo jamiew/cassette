@@ -263,6 +263,12 @@ struct FullPlayerView: View {
                 // Breathing room between scrubber → transport → volume — the `playerControlsSpacing` knob.
                 .padding(.top, Self.playerControlsSpacing)
 
+                #if os(iOS)
+                CastStatusRow(contentColor: vm.contentColor, secondaryContentColor: vm.secondaryContentColor)
+                    .padding(.horizontal, CassetteSpacing.l)
+                    .padding(.top, Self.playerControlsSpacing)
+                #endif
+
                 if dynamicTypeSize < .accessibility1 {
                     VolumeSection(contentColor: vm.contentColor, secondaryContentColor: vm.secondaryContentColor)
                         .padding(.horizontal, CassetteSpacing.l)
@@ -691,6 +697,12 @@ struct FullPlayerView: View {
                 secondaryContentColor: vm.secondaryContentColor
             )
             .padding(.top, CassetteSpacing.s)
+
+            #if os(iOS)
+            CastStatusRow(contentColor: vm.contentColor, secondaryContentColor: vm.secondaryContentColor)
+                .padding(.horizontal, CassetteSpacing.l)
+                .padding(.top, CassetteSpacing.s)
+            #endif
 
             if dynamicTypeSize < .accessibility1 {
                 VolumeSection(contentColor: vm.contentColor, secondaryContentColor: vm.secondaryContentColor)
@@ -1246,6 +1258,54 @@ private struct AirPlayRouteButton: View {
             .font(.title3)
             .foregroundStyle(tintColor)
             .frame(width: 44, height: 44)
+    }
+}
+#endif
+
+// MARK: - Casting
+
+#if os(iOS)
+/// "Casting to <speaker>", with a way out.
+///
+/// The SDK's own sheet can end a session, but reaching it means recognising the cast
+/// button as the way back. Naming where the audio went, beside the controls that are now
+/// driving it, costs a line and removes the guessing.
+///
+/// Deliberately outside the accessibility-size check that hides the volume slider: at any
+/// text size, knowing the music is on a speaker across the room is worth more than the row
+/// it occupies, and being unable to stop it is worse than a cramped layout.
+private struct CastStatusRow: View {
+    let contentColor: Color
+    let secondaryContentColor: Color
+    @Environment(\.appContainer) private var container
+
+    var body: some View {
+        if let cast = container?.castManager, cast.isCasting {
+            HStack(spacing: CassetteSpacing.s) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.caption)
+                    .accessibilityHidden(true)
+
+                Text("Casting to \(cast.deviceName ?? "a speaker")")
+                    .font(.footnote)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Spacer(minLength: CassetteSpacing.s)
+
+                Button {
+                    cast.endSession()
+                } label: {
+                    Text("Stop")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(contentColor)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Stop casting to \(cast.deviceName ?? "the speaker")")
+            }
+            .foregroundStyle(secondaryContentColor)
+            .accessibilityElement(children: .combine)
+        }
     }
 }
 #endif

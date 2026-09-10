@@ -8,6 +8,7 @@ import Foundation
 import GoogleCast
 import Observation
 import OSLog
+import UIKit
 
 /// Receiver-side playback events, delivered to PlayerService.
 /// The Cast SDK owns transport while a session is live, so the player reacts to
@@ -134,13 +135,64 @@ final class CastManager: NSObject {
         // SDK's automatic session resume on cold launch, which needs discovery running to re-find
         // the receiver, and makes GCKUICastButton hide itself based on Wi-Fi state.
         options.startDiscoveryAfterFirstTapOnCastButton = false
+        // Cassette keeps playing when it is backgrounded, so its session must too. An app
+        // that only casts while it is on screen wants the opposite.
         options.suspendSessionsWhenBackgrounded = false
         GCKCastContext.setSharedInstanceWith(options)
 
-        let manager = GCKCastContext.sharedInstance().sessionManager
+        styleCastUI()
+
+        let context = GCKCastContext.sharedInstance()
+        let manager = context.sessionManager
         sessionManager = manager
         manager.add(self)
+        context.discoveryManager.add(self)
         Logger.cast.info("Cast configured — discovery running")
+    }
+
+    /// Dresses the SDK's own device picker and connection sheet in Cassette's colours.
+    ///
+    /// Worth doing because the defaults are not merely off-brand. The connection sheet's
+    /// toolbar button inherits a colour that lands dark-on-dark, which makes "Stop Casting"
+    /// invisible rather than ugly — the user is connected with no apparent way out.
+    ///
+    /// Every colour here comes from the asset catalog, so all of it follows light and dark
+    /// mode the way the rest of the app does.
+    private func styleCastUI() {
+        let background = Self.color("CassetteBackgroundTertiary", fallback: .systemBackground)
+        let heading = Self.color("CassetteTextPrimary", fallback: .label)
+        let body = Self.color("CassetteTextSecondary", fallback: .secondaryLabel)
+        let accent = Self.color("CassetteAccent", fallback: .tintColor)
+
+        let style = GCKUIStyle.sharedInstance()
+        let chooser = style.castViews.deviceControl.deviceChooser
+        chooser.backgroundColor = background
+        chooser.iconTintColor = accent
+        chooser.headingTextColor = heading
+        chooser.bodyTextColor = body
+
+        let connection = style.castViews.deviceControl.connectionController
+        connection.backgroundColor = background
+        connection.iconTintColor = accent
+        connection.headingTextColor = heading
+        connection.bodyTextColor = body
+        connection.buttonTextColor = accent
+        connection.navigation.backgroundColor = background
+        connection.navigation.headingTextColor = heading
+        connection.navigation.buttonTextColor = accent
+        connection.toolbar.backgroundColor = background
+        connection.toolbar.headingTextColor = heading
+        // The one that matters most: without it "Stop Casting" is invisible.
+        connection.toolbar.buttonTextColor = accent
+
+        // Deliberately not overriding the sheet's play/pause artwork. The SDK draws a stop
+        // glyph for live streams, where pause is not a real option — Cassette casts finite
+        // tracks, so its defaults already read correctly.
+        style.apply()
+    }
+
+    private nonisolated static func color(_ name: String, fallback: UIColor) -> UIColor {
+        UIColor(named: name) ?? fallback
     }
 
     // MARK: - Transport
@@ -324,6 +376,10 @@ extension CastManager: GCKSessionManagerListener {
         Task { @MainActor in sessionBecameActive(session) }
     }
 
+    nonisolated func sessionManager(_: GCKSessionManager, willResumeCastSession session: GCKCastSession) {
+        Logger.cast.info("Resuming session on '\(session.device.friendlyName ?? "unknown", privacy: .public)'")
+    }
+
     nonisolated func sessionManager(_: GCKSessionManager, didResumeCastSession session: GCKCastSession) {
         Task { @MainActor in sessionBecameActive(session, resumed: true) }
     }
@@ -362,6 +418,22 @@ extension CastManager: GCKSessionManagerListener {
         Task { @MainActor in
             Logger.cast.error("Session failed to start: \(error.localizedDescription, privacy: .public)")
             sessionEnded()
+        }
+    }
+}
+
+// MARK: - Discovery
+
+/// Logged, not acted on. An earlier version of this in another app hid the cast button
+/// when the device list was empty, which turned out to be wrong twice over: the SDK
+/// manages the button's own visibility, and its picker shows a useful "looking for
+/// devices" state that a hidden button denies the user. The count is still the first
+/// thing worth knowing when someone says the picker is empty.
+extension CastManager: GCKDiscoveryManagerListener {
+    nonisolated func didUpdateDeviceList() {
+        Task { @MainActor in
+            let count = GCKCastContext.sharedInstance().discoveryManager.deviceCount
+            Logger.cast.info("Discovery sees \(count) receiver(s)")
         }
     }
 }
