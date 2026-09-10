@@ -41,8 +41,9 @@ Change `CASSETTE_DISPLAY_NAME` to rename a dev build, not the product name.
 - **`PlayerService` is the only thing that talks to the audio engine.** It owns one
   long-lived `AudioStreaming.AudioPlayer` for the whole session. Don't add a second.
 - **All playback URLs come from `MediaResolver`** (downloaded → cached → stream). Never
-  call SwiftSonic for a stream URL from anywhere else. The one exception is Chromecast,
-  which must bypass local files because the receiver fetches the audio itself.
+  call SwiftSonic for a stream URL from anywhere else. Chromecast is the exception: a
+  direct cast needs a stream URL because the receiver cannot reach a file on the phone,
+  while a relayed cast prefers exactly that file. See the Chromecast section.
 - **Never bypass SwiftSonic** for Subsonic API calls. If you are writing more than ~10
   lines of networking, you are in the wrong place. See CONTRIBUTING.md.
 - **New files are picked up automatically** — the targets use Xcode's synchronized folder
@@ -63,11 +64,22 @@ Change `CASSETTE_DISPLAY_NAME` to rename a dev build, not the product name.
 - **`PlayerService` treats Cast as an alternative transport.** `isCasting` gates every
   chokepoint (start, pause, resume, seek, stop, volume, progress). Add new transport calls
   to both branches.
-- **Cast always streams,** even for downloaded tracks — the file lives on the phone and
-  the TV cannot reach it. Subsonic stream URLs self-authenticate through query parameters,
-  which is what makes this work at all.
-- **Servers needing custom request headers cannot be cast.** The Cast SDK has nowhere to
-  put them. `castItem(for:)` detects this and shows a toast instead of failing silently.
+- **There are two ways to deliver a track, and `castItem(for:)` chooses.** Direct, where
+  the receiver fetches the Subsonic stream URL itself — fewer hops, and it keeps playing
+  when the app is suspended. Or relayed through `CastProxyServer`, where the phone serves
+  the audio over the LAN and the receiver collects from `http://<phone>/media/<token>`.
+- **Direct is preferred and used whenever it can work.** Subsonic stream URLs
+  self-authenticate through query parameters, which is what makes it possible at all.
+- **The relay is for what direct cannot do:** a server needing request headers the Cast
+  SDK has nowhere to put, an address only the phone can resolve, a certificate only the
+  phone trusts, and downloaded files. It is chosen up front for the cases we can detect,
+  and fallen back to for the rest when the receiver reports it could not fetch. After one
+  such failure the session stays relayed — the next track would fail identically.
+- **A relayed cast prefers a local copy.** If the track is downloaded or cached the phone
+  already holds the bytes, so the relay drops back to a single hop.
+- **The relay only lives as long as the app.** A suspended app serves nothing, so a
+  relayed cast stops when the app is. Direct casts are unaffected. Worth fixing; see
+  `CastProxyServer`'s note.
 - **The receiver must be able to reach the server on its own.** It fetches the audio with
   its own DNS and its own network, so a server that only answers on the phone is invisible
   to it: a Tailscale `ts.net` name, a Bonjour `.local` name, loopback, or a certificate the
@@ -80,7 +92,10 @@ Change `CASSETTE_DISPLAY_NAME` to rename a dev build, not the product name.
   state to ignore is what makes a broken cast look like a dead play button.
 - Uses the Default Media Receiver (`kGCKDefaultMediaReceiverApplicationID`) — no custom
   receiver, no Google registration fee.
-- **Testing it.** The receiver→player mapping is a pure `CastManager.event(for:…)`, so
+- **Testing the relay needs no Chromecast.** `CastProxyServerTests` runs the real server
+  over a socket and collects from it the way a receiver would, so ranges, HEAD and token
+  handling are covered headlessly in `make test`. `CastProxyHTTPTests` covers the parsing.
+- **Testing the session.** The receiver→player mapping is a pure `CastManager.event(for:…)`, so
   the transitions that matter are unit-tested rather than left to hardware. Add cases
   there instead of reaching for a live speaker. `make check-cast` answers the separate
   question of whether there is anything on the network to cast to; it is outside

@@ -54,6 +54,11 @@ actor PlayerService: PlayerServiceProtocol {
 
     #if os(iOS)
     private var castManager: CastManager?
+    /// Serves the current track to the receiver when it cannot fetch from the server itself.
+    private let castProxy = CastProxyServer()
+    /// Set once a receiver has failed to fetch directly. Stays set for the rest of the
+    /// session: what one track could not reach, the next one will not reach either.
+    private var castUsesProxy = false
     /// Mirrors `CastManager.isCasting` so the playback hot path avoids a MainActor hop.
     /// Kept in sync by the CastPlaybackDelegate callbacks.
     private var isCasting = false
@@ -2414,29 +2419,62 @@ extension PlayerService {
 
     /// Packages a track for the receiver, or returns nil when it cannot be cast.
     ///
-    /// The receiver fetches the audio itself, so this always builds a *stream* URL —
-    /// a downloaded or cached file lives on the phone and the TV cannot reach it.
+    /// Two ways to deliver a track. Directly, where the receiver fetches the stream URL
+    /// from the server itself — fewer hops, and it survives the app being suspended. Or
+    /// through `CastProxyServer`, where the phone serves the audio and relays.
+    ///
+    /// Direct is preferred and used whenever it can work. The relay is for the cases where
+    /// it cannot: a server needing request headers the Cast SDK has nowhere to put, an
+    /// address only this phone can resolve, or a receiver that has already told us it
+    /// could not fetch. Once that happens the session stays on the relay, because trying
+    /// direct again for every track would fail every track the same way.
     private func castItem(for song: DisplayableSong) async -> CastMediaItem? {
         guard let client = try? await serverService.makeSwiftSonicClient(),
               let streamURL = client.streamURL(id: song.id) else { return nil }
 
-        // Subsonic stream URLs authenticate through query parameters, which the receiver
-        // can replay. Custom request headers cannot travel that way, and the Cast SDK has
-        // nowhere to put them, so a server behind a header-authenticated proxy is out.
         let headers = (try? await serverService.activeCredentials().customHeaders) ?? [:]
-        guard CastMediaItem.isCastable(customHeaders: headers) else {
+        let unreachableHost = streamURL.host.map(CastMediaItem.isLikelyUnreachableByReceiver) ?? false
+        let needsRelay = castUsesProxy || unreachableHost || !CastMediaItem.isCastable(customHeaders: headers)
+
+        let artworkURL = client.coverArtURL(id: song.coverArtId ?? song.id, size: 600)
+        guard needsRelay else {
+            return CastMediaItem(song: song, streamURL: streamURL, artworkURL: artworkURL)
+        }
+
+        let contentType = CastMediaItem.contentType(forFormat: song.audioFormat)
+        // A downloaded or cached copy is the better source once the phone is serving:
+        // the bytes are already here, so the relay drops back to a single hop.
+        let local = await localCopy(of: song)
+        let media = CastProxyServer.Item(
+            source: local ?? streamURL,
+            headers: local == nil ? headers : [:],
+            contentType: contentType
+        )
+        guard let relayed = await castProxy.publish(media) else {
             await MainActor.run {
                 toastService.show(
-                    "Chromecast can't reach a server that needs custom headers.",
+                    "Cassette can't reach the network to send this to the Chromecast.",
                     style: .error,
                     duration: 5.0
                 )
             }
             return nil
         }
+        var relayedArtwork: URL?
+        if let artworkURL {
+            relayedArtwork = await castProxy.publish(
+                CastProxyServer.Item(source: artworkURL, headers: headers, contentType: "image/jpeg")
+            )
+        }
+        Logger.cast.info("Relaying '\(song.title, privacy: .public)' through the phone (local=\(local != nil))")
+        return CastMediaItem(song: song, streamURL: relayed, artworkURL: relayedArtwork)
+    }
 
-        let artworkURL = client.coverArtURL(id: song.coverArtId ?? song.id, size: 600)
-        return CastMediaItem(song: song, streamURL: streamURL, artworkURL: artworkURL)
+    /// A copy of this track already on the device, if there is one.
+    private func localCopy(of song: DisplayableSong) async -> URL? {
+        guard let serverId = await MainActor.run(body: { serverService.state.activeServer?.id }),
+              let source = try? await mediaResolver.resolve(songId: song.id, serverId: serverId) else { return nil }
+        return source.url.isFileURL ? source.url : nil
     }
 
     /// Hands one track to the receiver, falling back to local playback if it can't be cast.
@@ -2478,6 +2516,8 @@ extension PlayerService: CastPlaybackDelegate {
     /// The receiver went away — pick playback back up locally where it stopped.
     func castSessionDidEnd(at receiverPosition: TimeInterval?, wasPlaying: Bool) async {
         isCasting = false
+        castUsesProxy = false
+        await castProxy.stop()
         // A receiver holding nothing reports zero; the phone's own position is the honest one.
         let position = if let receiverPosition { receiverPosition } else { await MainActor.run { state.position } }
         guard let track = await MainActor.run(body: { state.currentTrack }),
@@ -2521,16 +2561,26 @@ extension PlayerService: CastPlaybackDelegate {
     /// a VPN, a `.local` name, or a certificate the phone trusts and the speaker does not
     /// is out of its reach. Say so rather than leaving a play button that does nothing.
     func castMediaDidFail(host: String?) async {
-        stopProgressTimer()
-        let server = host ?? "your server"
-        let message = if let host, CastMediaItem.isLikelyUnreachableByReceiver(host: host) {
-            "The Chromecast can't reach \(host). That name only resolves on your own network, not on the speaker."
-        } else {
-            "The Chromecast couldn't play this track. Check that it can reach \(server)."
+        // First failure of the session: the receiver could not fetch from the server, so
+        // serve the track from the phone instead and try the same track again. This is the
+        // path a VPN-only or self-signed server always takes, and the user sees a pause.
+        let track = await MainActor.run { state.currentTrack }
+        if !castUsesProxy, let track {
+            castUsesProxy = true
+            Logger.cast.warning("Receiver could not fetch from \(host ?? "the server", privacy: .public) — relaying through the phone")
+            let position = await MainActor.run { state.position }
+            await startCastPlayback(song: track, at: position, autoplay: true)
+            return
         }
+
+        stopProgressTimer()
         await MainActor.run {
             state.playbackState = .paused
-            toastService.show(message, style: .error, duration: 8.0)
+            toastService.show(
+                "The Chromecast couldn't play this track, even with Cassette relaying it.",
+                style: .error,
+                duration: 8.0
+            )
         }
     }
 
