@@ -28,8 +28,9 @@ import OSLog
 /// Cassette's version is simpler than either: it never transcodes, because a Subsonic
 /// server already serves formats the Default Media Receiver plays.
 ///
-/// Two things to know. The relay only lives as long as the app does — a suspended app
-/// serves nothing — and the token is unguessable because anything on the LAN can ask.
+/// Two things to know. The relay only lives as long as the app does, which is why a
+/// relayed cast holds the `audio` background mode open through `CastRelayKeepAlive`. And
+/// the token is unguessable, because anything on the LAN can ask for it.
 actor CastProxyServer {
     /// One track published for the receiver to collect.
     struct Item: Sendable {

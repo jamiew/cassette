@@ -56,9 +56,11 @@ actor PlayerService: PlayerServiceProtocol {
     private var castManager: CastManager?
     /// Serves the current track to the receiver when it cannot fetch from the server itself.
     private let castProxy = CastProxyServer()
-    /// Set once a receiver has failed to fetch directly. Stays set for the rest of the
-    /// session: what one track could not reach, the next one will not reach either.
+    /// Set once this session is relaying rather than casting directly. Stays set for the
+    /// rest of it: what one track could not reach, the next one will not reach either.
     private var castUsesProxy = false
+    /// Holds the `audio` background mode open while the phone is the source of the audio.
+    private let castKeepAlive = CastRelayKeepAlive()
     /// Whether this session has already told the user it is relaying. Once is enough.
     private var castRelayAnnounced = false
     /// Mirrors `CastManager.isCasting` so the playback hot path avoids a MainActor hop.
@@ -2467,21 +2469,23 @@ extension PlayerService {
             )
         }
         Logger.cast.info("Relaying '\(song.title, privacy: .public)' through the phone (local=\(local != nil))")
+        castUsesProxy = true
         await announceRelayOnce()
         return CastMediaItem(song: song, streamURL: relayed, artworkURL: relayedArtwork)
     }
 
     /// Says once per session that the phone is doing the serving.
     ///
-    /// Worth interrupting for, because the consequence is not obvious: the relay lives
-    /// only as long as the app, so locking the phone stops the music. Playing directly
-    /// does not have that problem and says nothing.
+    /// Worth interrupting for, because it changes what the phone has to keep doing: it is
+    /// now the source of the audio, so it stays awake, uses more battery, and has to stay
+    /// on the same network. Force-quitting it stops the music. A direct cast has none of
+    /// those consequences and says nothing.
     private func announceRelayOnce() async {
         guard !castRelayAnnounced else { return }
         castRelayAnnounced = true
         await MainActor.run {
             toastService.show(
-                "Your speaker can't reach your server, so Cassette is sending the audio. Keep the app open.",
+                "Your speaker can't reach your server, so Cassette is sending the audio itself. Stay on this network.",
                 style: .info,
                 duration: 6.0
             )
@@ -2504,11 +2508,19 @@ extension PlayerService {
             }
             return
         }
-        // Release the local route: the phone is a remote control from here on.
         audioPlayer.stop()
-        sessionActivationRetryTask?.cancel()
-        sessionActivationRetryTask = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if castUsesProxy {
+            // Relaying: the phone is the source, so it has to keep running. Holding the
+            // audio session and rendering silence is what stops iOS suspending it
+            // mid-track. See CastRelayKeepAlive.
+            configureAudioSessionIfNeeded()
+            castKeepAlive.start()
+        } else {
+            // Direct: the phone is a remote control from here on, so release the route.
+            sessionActivationRetryTask?.cancel()
+            sessionActivationRetryTask = nil
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
         await MainActor.run { [item] in manager.load(item, at: position, autoplay: autoplay) }
     }
 }
@@ -2536,6 +2548,7 @@ extension PlayerService: CastPlaybackDelegate {
         isCasting = false
         castUsesProxy = false
         castRelayAnnounced = false
+        castKeepAlive.stop()
         await castProxy.stop()
         // A receiver holding nothing reports zero; the phone's own position is the honest one.
         let position = if let receiverPosition { receiverPosition } else { await MainActor.run { state.position } }

@@ -84,9 +84,13 @@ Change `CASSETTE_DISPLAY_NAME` to rename a dev build, not the product name.
   such failure the session stays relayed — the next track would fail identically.
 - **A relayed cast prefers a local copy.** If the track is downloaded or cached the phone
   already holds the bytes, so the relay drops back to a single hop.
-- **The relay only lives as long as the app.** A suspended app serves nothing, so a
-  relayed cast stops when the app is. Direct casts are unaffected. Worth fixing; see
-  `CastProxyServer`'s note.
+- **A relayed cast has to keep the app running.** The phone is the source, so a suspended
+  app kills the stream mid-track. `CastRelayKeepAlive` holds the `audio` background mode
+  open by rendering silence, which is what the OS actually measures — an active audio
+  session on its own does not count. It runs only while relaying, never during local
+  playback or a direct cast, and owns its own `AVAudioEngine` so it cannot disturb the
+  `AudioStreaming` player. A relayed cast still ends if the app is force-quit or the phone
+  leaves the network; a direct cast survives both.
 - **A receiver that fails says so once, quietly.** It goes idle with `idleReason == .error`
   and nothing else. Map that to `CastStatusEvent.failed` and surface it; treating it as a
   state to ignore is what makes a broken cast look like a dead play button.
